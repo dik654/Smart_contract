@@ -604,46 +604,54 @@ contract Vault is ReentrancyGuard, IVault {
             position.averagePrice = getNextAveragePrice(_indexToken, position.size, position.averagePrice, _isLong, price, _sizeDelta, position.lastIncreasedTime);
         }
 
-        // 레버리지 
+        // 레버리지 수수료 계산
         uint256 fee = _collectMarginFees(_account, _collateralToken, _indexToken, _isLong, _sizeDelta, position.size, position.entryFundingRate);
+        // 이번 트랜잭션에 넣은 담보 토큰 개수
         uint256 collateralDelta = _transferIn(_collateralToken);
+        // 이번 트랜잭션에 넣은 담보 토큰의 가격 
         uint256 collateralDeltaUsd = tokenToUsdMin(_collateralToken, collateralDelta);
 
+        // 포지션 담보에 이번 트랜잭션에 넣은 담보 토큰의 가격을 더해서 업데이트
         position.collateral = position.collateral.add(collateralDeltaUsd);
+        // 포지션 담보가 레버리지 수수료를 감당할 수 있는지 확인
         _validate(position.collateral >= fee, 29);
 
+        // 감당 가능하다면 수수료만큼 포지션 담보에서 빼기
         position.collateral = position.collateral.sub(fee);
+        // 포지션 시작 수수료 최신화 
         position.entryFundingRate = getEntryFundingRate(_collateralToken, _indexToken, _isLong);
+        // 포지션의 크기 최신화
         position.size = position.size.add(_sizeDelta);
+        // 포지션 마지막 증가 시간 최신화
         position.lastIncreasedTime = block.timestamp;
 
         _validate(position.size > 0, 30);
         _validatePosition(position.size, position.collateral);
         validateLiquidation(_account, _collateralToken, _indexToken, _isLong, true);
 
-        // reserve tokens to pay profits on the position
+        // 포지션으로 들어가는 담보 토큰은 reserve로 추가
         uint256 reserveDelta = usdToTokenMax(_collateralToken, _sizeDelta);
         position.reserveAmount = position.reserveAmount.add(reserveDelta);
         _increaseReservedAmount(_collateralToken, reserveDelta);
 
+        // 롱이라면
         if (_isLong) {
-            // guaranteedUsd stores the sum of (position.size - position.collateral) for all positions
-            // if a fee is charged on the collateral then guaranteedUsd should be increased by that fee amount
-            // since (position.size - position.collateral) would have increased by `fee`
+            // 수수료는 담보에서 빠져나갔으니 (포지션 크기 - 담보)인 순수익에 fee만큼을 더해준다 (포지션의 전체 가치(size)에서 담보(collateral)를 뺀 값)
             _increaseGuaranteedUsd(_collateralToken, _sizeDelta.add(fee));
             _decreaseGuaranteedUsd(_collateralToken, collateralDeltaUsd);
-            // treat the deposited collateral as part of the pool
+            // 담보도 pool의 일부이므로 추가한다
             _increasePoolAmount(_collateralToken, collateralDelta);
-            // fees need to be deducted from the pool since fees are deducted from position.collateral
-            // and collateral is treated as part of the pool
+            // fee는 pool에서 빠지는 값이므로 뺴준다
             _decreasePoolAmount(_collateralToken, usdToTokenMin(_collateralToken, fee));
         } else {
+            // 숏이라면
             if (globalShortSizes[_indexToken] == 0) {
                 globalShortAveragePrices[_indexToken] = price;
             } else {
+                // 다음 숏 평균가격 저장
                 globalShortAveragePrices[_indexToken] = getNextGlobalShortAveragePrice(_indexToken, price, _sizeDelta);
             }
-
+            // 전체 숏의 크기 저장
             _increaseGlobalShortSize(_indexToken, _sizeDelta);
         }
 
@@ -657,10 +665,23 @@ contract Vault is ReentrancyGuard, IVault {
         return _decreasePosition(_account, _collateralToken, _indexToken, _collateralDelta, _sizeDelta, _isLong, _receiver);
     }
 
+    /**
+     * @dev 포지션 감소시키기(숏 아님, 포지션에 들어있는 담보의 양을 줄이는 것)
+     * @param _account 
+     * @param _collateralToken 
+     * @param _indexToken 
+     * @param _collateralDelta 
+     * @param _sizeDelta 
+     * @param _isLong 
+     * @param _receiver 
+     */
     function _decreasePosition(address _account, address _collateralToken, address _indexToken, uint256 _collateralDelta, uint256 _sizeDelta, bool _isLong, address _receiver) private returns (uint256) {
+        // 인수 검사 (없는 로직)
         vaultUtils.validateDecreasePosition(_account, _collateralToken, _indexToken, _collateralDelta, _sizeDelta, _isLong, _receiver);
+        // CumulativeFundingRate 증가시키기
         updateCumulativeFundingRate(_collateralToken, _indexToken);
 
+        // 포지션 데이터 가져오기
         bytes32 key = getPositionKey(_account, _collateralToken, _indexToken, _isLong);
         Position storage position = positions[key];
         _validate(position.size > 0, 31);
@@ -670,21 +691,27 @@ contract Vault is ReentrancyGuard, IVault {
         uint256 collateral = position.collateral;
         // scrop variables to avoid stack too deep errors
         {
+        // 포지션 내의 reserve 감소시키기
         uint256 reserveDelta = position.reserveAmount.mul(_sizeDelta).div(position.size);
         position.reserveAmount = position.reserveAmount.sub(reserveDelta);
         _decreaseReservedAmount(_collateralToken, reserveDelta);
         }
 
+        // 담보 감소시키기
         (uint256 usdOut, uint256 usdOutAfterFee) = _reduceCollateral(_account, _collateralToken, _indexToken, _collateralDelta, _sizeDelta, _isLong);
 
+        // 모두 빼는게 아니라면
         if (position.size != _sizeDelta) {
             position.entryFundingRate = getEntryFundingRate(_collateralToken, _indexToken, _isLong);
+            // 전체 크기에서 빼려는 크기만큼을 빼고
             position.size = position.size.sub(_sizeDelta);
 
             _validatePosition(position.size, position.collateral);
             validateLiquidation(_account, _collateralToken, _indexToken, _isLong, true);
 
+            // 롱이라면
             if (_isLong) {
+                // 보장 USD - 빼려는 크기 + 변화한 담보(_reduceCollateral로 position.collateral이 변화되었음)
                 _increaseGuaranteedUsd(_collateralToken, collateral.sub(position.collateral));
                 _decreaseGuaranteedUsd(_collateralToken, _sizeDelta);
             }
@@ -693,7 +720,9 @@ contract Vault is ReentrancyGuard, IVault {
             emit DecreasePosition(key, _account, _collateralToken, _indexToken, _collateralDelta, _sizeDelta, _isLong, price, usdOut.sub(usdOutAfterFee));
             emit UpdatePosition(key, position.size, position.collateral, position.averagePrice, position.entryFundingRate, position.reserveAmount, position.realisedPnl, price);
         } else {
+            // 모두 빼는거라면
             if (_isLong) {
+                // 보장 USD - 전체 크기 + 전체 담보 (포지션의 전체 가치(size)에서 담보(collateral)를 뺀 값)
                 _increaseGuaranteedUsd(_collateralToken, collateral);
                 _decreaseGuaranteedUsd(_collateralToken, _sizeDelta);
             }
@@ -701,18 +730,21 @@ contract Vault is ReentrancyGuard, IVault {
             uint256 price = _isLong ? getMinPrice(_indexToken) : getMaxPrice(_indexToken);
             emit DecreasePosition(key, _account, _collateralToken, _indexToken, _collateralDelta, _sizeDelta, _isLong, price, usdOut.sub(usdOutAfterFee));
             emit ClosePosition(key, position.size, position.collateral, position.averagePrice, position.entryFundingRate, position.reserveAmount, position.realisedPnl);
-
+            // 모두 꺼냈으니 포지션 데이터 삭제
             delete positions[key];
         }
 
+        // 숏이라면 전체 숏크기에 size만큼 감소 (뺐으므로)
         if (!_isLong) {
             _decreaseGlobalShortSize(_indexToken, _sizeDelta);
         }
 
         if (usdOut > 0) {
             if (_isLong) {
+                // 꺼내는 만큼 pool에서도 뺴기
                 _decreasePoolAmount(_collateralToken, usdToTokenMin(_collateralToken, usdOut));
             }
+            // 계산이 완료되어 수수료를 제외한 꺼낸 양만큼 receiver에게 전송
             uint256 amountOutAfterFees = usdToTokenMin(_collateralToken, usdOutAfterFee);
             _transferOut(_collateralToken, amountOutAfterFees, _receiver);
             return amountOutAfterFees;
@@ -890,7 +922,7 @@ contract Vault is ReentrancyGuard, IVault {
         uint256 fundingRate = getNextFundingRate(_collateralToken);
         // 변경된 fundingRate 누적시키기
         cumulativeFundingRates[_collateralToken] = cumulativeFundingRates[_collateralToken].add(fundingRate);
-        // 마지막 funding 타입 업데이트
+        // 마지막 funding 타임 업데이트
         lastFundingTimes[_collateralToken] = block.timestamp.div(fundingInterval).mul(fundingInterval);
 
         emit UpdateFundingRate(_collateralToken, cumulativeFundingRates[_collateralToken]);
