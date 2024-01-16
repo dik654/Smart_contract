@@ -4,3 +4,9 @@
 [submodule "solidity_security/00.basic_solc_project/lib/openzeppelin-contracts"]
 	path = solidity_security/00.basic_solc_project/lib/openzeppelin-contracts
 	url = https://github.com/OpenZeppelin/openzeppelin-contracts
+[submodule "gmx/lib/forge-std"]
+	path = gmx/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+[submodule "gmx/lib/openzeppelin-contracts"]
+	path = gmx/lib/openzeppelin-contracts
+	url = https://github.com/openzeppelin/openzeppelin-contracts
