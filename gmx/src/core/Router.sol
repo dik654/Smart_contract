@@ -11,6 +11,7 @@ import "../tokens/interfaces/IWETH.sol";
 import "./interfaces/IVault.sol";
 import "./interfaces/IRouter.sol";
 
+// Router 자체에서는 swap만을 실행해서 사용함
 contract Router is IRouter {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
@@ -152,6 +153,14 @@ contract Router is IRouter {
         _transferOutETH(amountOut, _receiver);
     }
 
+    /**
+     * @dev vault에게 increasePosition을 실행시키는 로직
+     * @param _collateralToken 
+     * @param _indexToken 
+     * @param _sizeDelta 
+     * @param _isLong 
+     * @param _price 
+     */
     function _increasePosition(address _collateralToken, address _indexToken, uint256 _sizeDelta, bool _isLong, uint256 _price) private {
         if (_isLong) {
             require(IVault(vault).getMaxPrice(_indexToken) <= _price, "Router: mark price higher than limit");
@@ -162,7 +171,18 @@ contract Router is IRouter {
         IVault(vault).increasePosition(_sender(), _collateralToken, _indexToken, _sizeDelta, _isLong);
     }
 
+    /**
+     * @dev vault에게 decreasePosition을 실행시키는 로직
+     * @param _collateralToken 
+     * @param _indexToken 
+     * @param _collateralDelta 
+     * @param _sizeDelta 
+     * @param _isLong 
+     * @param _receiver 
+     * @param _price 
+     */
     function _decreasePosition(address _collateralToken, address _indexToken, uint256 _collateralDelta, uint256 _sizeDelta, bool _isLong, address _receiver, uint256 _price) private returns (uint256) {
+        // long이면 최소 
         if (_isLong) {
             require(IVault(vault).getMinPrice(_indexToken) >= _price, "Router: mark price lower than limit");
         } else {
@@ -172,20 +192,37 @@ contract Router is IRouter {
         return IVault(vault).decreasePosition(_sender(), _collateralToken, _indexToken, _collateralDelta, _sizeDelta, _isLong, _receiver);
     }
 
+    /**
+     * @dev msg.value로 넣은 ETH를 WETH로 변환한 뒤 vault에 deposit
+     */
     function _transferETHToVault() private {
         IWETH(weth).deposit{value: msg.value}();
         IERC20(weth).safeTransfer(vault, msg.value);
     }
 
+    /**
+     * @dev vault에서 WETH를 꺼내서 ETH로 바꿔서 receiver에게 전달
+     * @param _amountOut 
+     * @param _receiver 
+     */
     function _transferOutETH(uint256 _amountOut, address payable _receiver) private {
         IWETH(weth).withdraw(_amountOut);
         _receiver.sendValue(_amountOut);
     }
 
+    /**
+     * @dev swap을 실행시키는 함수
+     * @dev swap에 있어 A -> B와 A -> B -> C 두 가지 경우 제공
+     * @param _path 
+     * @param _minOut 
+     * @param _receiver 
+     */ 
     function _swap(address[] memory _path, uint256 _minOut, address _receiver) private returns (uint256) {
+        // A -> B
         if (_path.length == 2) {
             return _vaultSwap(_path[0], _path[1], _minOut, _receiver);
         }
+        // A -> B -> C 
         if (_path.length == 3) {
             uint256 midOut = _vaultSwap(_path[0], _path[1], 0, address(this));
             IERC20(_path[1]).safeTransfer(vault, midOut);
@@ -195,17 +232,28 @@ contract Router is IRouter {
         revert("Router: invalid _path.length");
     }
 
+    /**
+     * @dev vault에게 A -> B swap을 실행시키는 로직
+     * @param _tokenIn 
+     * @param _tokenOut 
+     * @param _minOut 
+     * @param _receiver 
+     */
     function _vaultSwap(address _tokenIn, address _tokenOut, uint256 _minOut, address _receiver) private returns (uint256) {
         uint256 amountOut;
 
-        if (_tokenOut == usdg) { // buyUSDG
+        // 토큰 -> USDG일 때
+        if (_tokenOut == usdg) {
             amountOut = IVault(vault).buyUSDG(_tokenIn, _receiver);
+        // USDG -> 토큰일 때
         } else if (_tokenIn == usdg) { // sellUSDG
             amountOut = IVault(vault).sellUSDG(_tokenOut, _receiver);
-        } else { // swap
+        // 토큰 -> 토큰일 때
+        } else {
             amountOut = IVault(vault).swap(_tokenIn, _tokenOut, _receiver);
         }
 
+        // 받고 싶은 최소 토큰보다 커야지만 실행되게하여 MEV 피해를 최소화
         require(amountOut >= _minOut, "Router: insufficient amountOut");
         return amountOut;
     }
