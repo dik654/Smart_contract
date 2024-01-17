@@ -440,6 +440,13 @@ contract Vault is ReentrancyGuard, IVault {
     }
 
     // the governance controlling this function should have a timelock
+    
+    /**
+     * @dev vault 컨트랙트를 변경하기 위해서 들어있는 토큰을 변경할 vault로 전송하는 함수
+     * @param _newVault 
+     * @param _token 
+     * @param _amount 
+     */
     function upgradeVault(address _newVault, address _token, uint256 _amount) external {
         _onlyGov();
         IERC20(_token).safeTransfer(_newVault, _amount);
@@ -447,121 +454,187 @@ contract Vault is ReentrancyGuard, IVault {
 
     // deposit into the pool without minting USDG tokens
     // useful in allowing the pool to become over-collaterised
+    /**
+     * @dev 토큰을 vault pool에 바로 넣는 함수
+     * @param _token 
+     */
     function directPoolDeposit(address _token) external override nonReentrant {
+        // 사용 가능한 토큰인지 체크
         _validate(whitelistedTokens[_token], 14);
+        // 넣은 토큰의 크기가 0보다 많은지 체크
         uint256 tokenAmount = _transferIn(_token);
         _validate(tokenAmount > 0, 15);
+        // 넣은 토큰만큼 pool에 추가
         _increasePoolAmount(_token, tokenAmount);
         emit DirectPoolDeposit(_token, tokenAmount);
     }
 
+    /**
+     * @dev 토큰을 USDG로 swap
+     * @param _token 넣을 토큰
+     * @param _receiver 
+     */
     function buyUSDG(address _token, address _receiver) external override nonReentrant returns (uint256) {
+        // 매니저 컨트랙트에 의해서만 실행 가능
         _validateManager();
+        // 사용 가능한 토큰인지 체크
         _validate(whitelistedTokens[_token], 16);
+        // 실제 사용되는 플래그는 아님
         useSwapPricing = true;
 
+        // 넣은 토큰 개수 체크
         uint256 tokenAmount = _transferIn(_token);
         _validate(tokenAmount > 0, 17);
 
+        // 변경된 reserve / pool 기록 증가시키기
         updateCumulativeFundingRate(_token, _token);
 
+        // 해당 토큰 최소 가격 가져오기
         uint256 price = getMinPrice(_token);
 
+        // 내가 넣은 토큰의 총 USD 가치 계산
         uint256 usdgAmount = tokenAmount.mul(price).div(PRICE_PRECISION);
         usdgAmount = adjustForDecimals(usdgAmount, _token, usdg);
         _validate(usdgAmount > 0, 18);
 
+        // 수수료 Basis Point를 가져와 swap 수수료 처리 이후 토큰 개수 리턴
         uint256 feeBasisPoints = vaultUtils.getBuyUsdgFeeBasisPoints(_token, usdgAmount);
         uint256 amountAfterFees = _collectSwapFees(_token, tokenAmount, feeBasisPoints);
+  
+        // 수수료 처리 이후 토큰 개수 * 토큰 최소가격
         uint256 mintAmount = amountAfterFees.mul(price).div(PRICE_PRECISION);
         mintAmount = adjustForDecimals(mintAmount, _token, usdg);
 
+        // usdg pool에 토큰 개수만큼 추가
         _increaseUsdgAmount(_token, mintAmount);
+        // 전체 pool에 토큰 가치만큼 추가
         _increasePoolAmount(_token, amountAfterFees);
 
+        // usdg 토큰 개수만큼 receiver에게 전송
         IUSDG(usdg).mint(_receiver, mintAmount);
 
         emit BuyUSDG(_receiver, _token, tokenAmount, mintAmount, feeBasisPoints);
 
+        // 실제 사용되는 플래그는 아님
         useSwapPricing = false;
         return mintAmount;
     }
 
+    /**
+     * @dev USDG를 특정 토큰으로 swap
+     * @dev USDG는 시장에서 제거 (총 공급량 감소)
+     * @param _token 받을 토큰
+     * @param _receiver 
+     */
     function sellUSDG(address _token, address _receiver) external override nonReentrant returns (uint256) {
+        // 등록된 매니저 컨트랙트만 실행 가능
         _validateManager();
+        // 등록된 토큰만 사용가능
         _validate(whitelistedTokens[_token], 19);
+        // 실제 사용되는 플래그는 아님
         useSwapPricing = true;
 
+        // 넣은 usdg가 0보다 큰지 체크
         uint256 usdgAmount = _transferIn(usdg);
         _validate(usdgAmount > 0, 20);
-
+        
+        // reserve / pool 누적 업데이트
         updateCumulativeFundingRate(_token, _token);
 
+        // 받을 수 있는 토큰 개수가 0보다 큰지 체크 
         uint256 redemptionAmount = getRedemptionAmount(_token, usdgAmount);
         _validate(redemptionAmount > 0, 21);
 
+        // swap되는 USDG만큼 usdg pool에서 빼기 (시장에서 제거)
+        // USDG는 Vault 시스템 내에서 생성되고 관리되는 스테이블코인이므로 총 공급량이 usdgAmount로 고정되어있기 때문)
         _decreaseUsdgAmount(_token, usdgAmount);
+        // 전체 pool에서 받는 토큰의 개수만큼 빼기
         _decreasePoolAmount(_token, redemptionAmount);
 
+        // USDG 시장에서 실제로 제거
         IUSDG(usdg).burn(address(this), usdgAmount);
 
-        // the _transferIn call increased the value of tokenBalances[usdg]
-        // usually decreases in token balances are synced by calling _transferOut
-        // however, for usdg, the tokens are burnt, so _updateTokenBalance should
-        // be manually called to record the decrease in tokens
+        // _decreaseUsdgAmount로 token balance까지 업데이트 되지 않으므로 
+        // 실제로 제거된 usdg 토큰 개수만큼 token balance 업데이트 
         _updateTokenBalance(usdg);
 
+        // 수수료를 제외한 토큰 개수 계산
         uint256 feeBasisPoints = vaultUtils.getSellUsdgFeeBasisPoints(_token, usdgAmount);
         uint256 amountOut = _collectSwapFees(_token, redemptionAmount, feeBasisPoints);
         _validate(amountOut > 0, 22);
 
+        // 바꾼 토큰을 receiver에게 전달
         _transferOut(_token, amountOut, _receiver);
 
         emit SellUSDG(_receiver, _token, usdgAmount, amountOut, feeBasisPoints);
 
+        // 실제 사용되는 플래그는 아님
         useSwapPricing = false;
         return amountOut;
     }
 
+    /**
+     * @dev A 토큰을 B 토큰으로 바꾸는 함수
+     * @param _tokenIn 
+     * @param _tokenOut 
+     * @param _receiver 
+     */
     function swap(address _tokenIn, address _tokenOut, address _receiver) external override nonReentrant returns (uint256) {
+        // swap 가능 플래그가 켜져있는지 체크
         _validate(isSwapEnabled, 23);
+        // 두 토큰 모두 등록된 토큰인지 체크
         _validate(whitelistedTokens[_tokenIn], 24);
         _validate(whitelistedTokens[_tokenOut], 25);
+        // 서로 다른 토큰이 맞는지 체크
         _validate(_tokenIn != _tokenOut, 26);
-
+        // 실제 사용되는 플래그는 아님
         useSwapPricing = true;
 
+        // 두 토큰 모두 reserve / pool 비율 누적 업데이트
         updateCumulativeFundingRate(_tokenIn, _tokenIn);
         updateCumulativeFundingRate(_tokenOut, _tokenOut);
 
+        // 토큰 넣은 개수가 0개보다 큰 지 체크
         uint256 amountIn = _transferIn(_tokenIn);
         _validate(amountIn > 0, 27);
 
+        // 넣은 토큰의 최소 가치와 받을 토큰의 최대 가치 
         uint256 priceIn = getMinPrice(_tokenIn);
         uint256 priceOut = getMaxPrice(_tokenOut);
 
+        // 받을 토큰 개수 = 넣은 토큰 개수 * (넣은 토큰 가치 / 받을 토큰 가치)
         uint256 amountOut = amountIn.mul(priceIn).div(priceOut);
         amountOut = adjustForDecimals(amountOut, _tokenIn, _tokenOut);
 
+        // USDG는 Vault 시스템 내에서 다른 토큰을 예치하고 발행되는 스테이블코인
+        // 항상 각 토큰의 가치 변동을 USDG가 해야 시스템이 안정적이므로 두 토큰 간 교환임에도 usdgAmount를 변경시킨다
+        // 토큰 개수 = 넣은 토큰 * 넣은 토큰 가격
+        // USDG 개수 = 토큰 개수 * (넣은 토큰 가치 / USDG 가치) 
         // adjust usdgAmounts by the same usdgAmount as debt is shifted between the assets
         uint256 usdgAmount = amountIn.mul(priceIn).div(PRICE_PRECISION);
         usdgAmount = adjustForDecimals(usdgAmount, _tokenIn, usdg);
 
+        // 수수료 처리 후의 토큰 개수 계산 
         uint256 feeBasisPoints = vaultUtils.getSwapFeeBasisPoints(_tokenIn, _tokenOut, usdgAmount);
         uint256 amountOutAfterFees = _collectSwapFees(_tokenOut, amountOut, feeBasisPoints);
 
+        // swap에 따른 USDG 가치 업데이트
         _increaseUsdgAmount(_tokenIn, usdgAmount);
         _decreaseUsdgAmount(_tokenOut, usdgAmount);
 
+        // swap에 따른 전체 pool의 토큰 개수 업데이트
         _increasePoolAmount(_tokenIn, amountIn);
         _decreasePoolAmount(_tokenOut, amountOut);
 
+        // Buffer은 최소 유동성으로, 시스템의 안정성을 위해 항상 vault안에 지정한 Buffer보다 많은 양의 토큰을 갖도록 검사
         _validateBufferAmount(_tokenOut);
 
+        // swap한 토큰 receiver에게 전송
         _transferOut(_tokenOut, amountOutAfterFees, _receiver);
 
         emit Swap(_receiver, _tokenIn, _tokenOut, amountIn, amountOut, amountOutAfterFees, feeBasisPoints);
 
+        // 실제 사용되는 플래그는 아님
         useSwapPricing = false;
         return amountOutAfterFees;
     }
@@ -741,7 +814,7 @@ contract Vault is ReentrancyGuard, IVault {
 
         if (usdOut > 0) {
             if (_isLong) {
-                // 꺼내는 만큼 pool에서도 뺴기
+                // 꺼내는 만큼 pool에서도 빼기
                 _decreasePoolAmount(_collateralToken, usdToTokenMin(_collateralToken, usdOut));
             }
             // 계산이 완료되어 수수료를 제외한 꺼낸 양만큼 receiver에게 전송
@@ -753,6 +826,14 @@ contract Vault is ReentrancyGuard, IVault {
         return 0;
     }
 
+    /**
+     * @dev 포지션 강제 청산
+     * @param _account 청산시킬 유저
+     * @param _collateralToken 
+     * @param _indexToken 
+     * @param _isLong 
+     * @param _feeReceiver 유저가 청산 수수료를 받게하여 자발적으로 청산 함수를 실행시키도록 한다
+     */
     function liquidatePosition(address _account, address _collateralToken, address _indexToken, bool _isLong, address _feeReceiver) external override nonReentrant {
         if (inPrivateLiquidationMode) {
             _validate(isLiquidator[msg.sender], 34);
@@ -761,47 +842,59 @@ contract Vault is ReentrancyGuard, IVault {
         // set includeAmmPrice to false to prevent manipulated liquidations
         includeAmmPrice = false;
 
+        // reserve / amount 최신화
         updateCumulativeFundingRate(_collateralToken, _indexToken);
 
+        // 포지션 데이터 가져오기
         bytes32 key = getPositionKey(_account, _collateralToken, _indexToken, _isLong);
         Position memory position = positions[key];
         _validate(position.size > 0, 35);
 
+        // 유효한 유동성 상태인지 체크
         (uint256 liquidationState, uint256 marginFees) = validateLiquidation(_account, _collateralToken, _indexToken, _isLong, false);
         _validate(liquidationState != 0, 36);
         if (liquidationState == 2) {
-            // max leverage exceeded but there is collateral remaining after deducting losses so decreasePosition instead
+            // 담보변화량은 0으로 두고 size를 변화시켜서 레버리지 범위를 변경한다
             _decreasePosition(_account, _collateralToken, _indexToken, 0, position.size, _isLong, _account);
             includeAmmPrice = true;
             return;
         }
 
+        // 마진 수수료의 usd 가치만큼 feeReserves에 추가 
         uint256 feeTokens = usdToTokenMin(_collateralToken, marginFees);
         feeReserves[_collateralToken] = feeReserves[_collateralToken].add(feeTokens);
         emit CollectMarginFees(_collateralToken, marginFees, feeTokens);
 
+        // reserve pool에서 reserve amount만큼 빼기
         _decreaseReservedAmount(_collateralToken, position.reserveAmount);
         if (_isLong) {
+            // guaranteedUsd에서 (크기 - 담보)만큼 빼기
             _decreaseGuaranteedUsd(_collateralToken, position.size.sub(position.collateral));
+            // pool에서 usd 가치만큼 빼기
             _decreasePoolAmount(_collateralToken, usdToTokenMin(_collateralToken, marginFees));
         }
 
         uint256 markPrice = _isLong ? getMinPrice(_indexToken) : getMaxPrice(_indexToken);
         emit LiquidatePosition(key, _account, _collateralToken, _indexToken, _isLong, position.size, position.collateral, position.reserveAmount, position.realisedPnl, markPrice);
 
+        // 숏이고 담보가 마진 수수료를 감당할 수 있다면
         if (!_isLong && marginFees < position.collateral) {
+            // 수수료를 제외한 남은 담보만큼 pool에 증가시키기
             uint256 remainingCollateral = position.collateral.sub(marginFees);
             _increasePoolAmount(_collateralToken, usdToTokenMin(_collateralToken, remainingCollateral));
         }
 
+        // 숏이라면
         if (!_isLong) {
+            // 전체 숏 크기 증가
             _decreaseGlobalShortSize(_indexToken, position.size);
         }
 
+        // 포지션 정보 삭제
         delete positions[key];
 
-        // pay the fee receiver using the pool, we assume that in general the liquidated amount should be sufficient to cover
-        // the liquidation fees
+
+        // 청산 실행자에게 청산 수수료를 전달
         _decreasePoolAmount(_collateralToken, usdToTokenMin(_collateralToken, liquidationFeeUsd));
         _transferOut(_collateralToken, usdToTokenMin(_collateralToken, liquidationFeeUsd), _feeReceiver);
 
@@ -1040,21 +1133,22 @@ contract Vault is ReentrancyGuard, IVault {
 
         // long일 경우
         if (_isLong) {
-            // 가격이 평균가보다 크다면 이득
+            // 가격이 작성해뒀던 평균가보다 크다면 이득
             hasProfit = price > _averagePrice;
         // short일 경우
         } else {
-            // 가격이 평균가보다 작다면 이득
+            // 가격이 작성해뒀던 평균가보다 작다면 이득
             hasProfit = _averagePrice > price;
         }
 
-        // if the minProfitTime has passed then there will be no min profit threshold
-        // the min profit threshold helps to prevent front-running issues
+        // 일정 시간이 지나야 최소 이득을 얻을 수 있음
         uint256 minBps = block.timestamp > _lastIncreasedTime.add(minProfitTime) ? 0 : minProfitBasisPoints[_indexToken];
+        // 이득이지만 크기의 최소 이득 이하라면 delta는 0
         if (hasProfit && delta.mul(BASIS_POINTS_DIVISOR) <= _size.mul(minBps)) {
             delta = 0;
         }
 
+        // 이득 여부, 크기 * 가격 변화량 / 저장된 가격
         return (hasProfit, delta);
     }
 

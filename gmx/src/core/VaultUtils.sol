@@ -57,38 +57,62 @@ contract VaultUtils is IVaultUtils, Governable {
         return position;
     }
 
-    // note that if calling this function independently the cumulativeFundingRates used in getFundingFee will not be the latest value
+    /**
+     * @dev liquidationState가 1이어야 한다
+     * @param _account 
+     * @param _collateralToken 
+     * @param _indexToken 
+     * @param _isLong 
+     * @param _raise 청산 조건 불만족시 예외처리
+     * @return liquidationState 
+     * @return marginFees 
+     */
     function validateLiquidation(address _account, address _collateralToken, address _indexToken, bool _isLong, bool _raise) public view override returns (uint256, uint256) {
+        // 포지션 가져오기
         Position memory position = getPosition(_account, _collateralToken, _indexToken, _isLong);
         IVault _vault = vault;
 
+        // 이득 여부, 변화량 = 크기 * 변화량 / 저장된 가격
         (bool hasProfit, uint256 delta) = _vault.getDelta(_indexToken, position.size, position.averagePrice, _isLong, position.lastIncreasedTime);
+        // margin fee = funding fee + position fee
         uint256 marginFees = getFundingFee(_account, _collateralToken, _indexToken, _isLong, position.size, position.entryFundingRate);
         marginFees = marginFees.add(getPositionFee(_account, _collateralToken, _indexToken, _isLong, position.size));
 
+        // 손해이고 변화량이 담보보다 크다면
         if (!hasProfit && position.collateral < delta) {
             if (_raise) { revert("Vault: losses exceed collateral"); }
             return (1, marginFees);
         }
 
         uint256 remainingCollateral = position.collateral;
+        // 손해라면 (담보 - 변화량)으로 남은 담보 계산
         if (!hasProfit) {
             remainingCollateral = position.collateral.sub(delta);
         }
 
+        // 남은 담보가 마진 수수료를 감당하지 못한다면
         if (remainingCollateral < marginFees) {
+            // 엄격 모드일 경우 예외처리
             if (_raise) { revert("Vault: fees exceed collateral"); }
-            // cap the fees to the remainingCollateral
+            // 아니라면 청산 가능 true, 남은 담보의 크기 리턴
             return (1, remainingCollateral);
         }
 
+        // 포지션의 손실이 담보를 초과하거나, 남은 담보가 마진 요구사항을 충족시키지 못하는 경우 (강제 청산)
+        // 남은 담보가 마진 수수료 + 유동성 수수료보다 작다면
         if (remainingCollateral < marginFees.add(_vault.liquidationFeeUsd())) {
+            // 엄격 모드일 경우 예외처리
             if (_raise) { revert("Vault: liquidation fees exceed collateral"); }
+            // 아니라면 청산 가능 true, 남은 담보의 크기 리턴
             return (1, marginFees);
         }
 
+        // 포지션의 레버리지가 허용된 최대 레버리지를 초과하는 경우 (조정)
+        // 남은 담보 * 레버리지가 포지션 크기보다 작다면
         if (remainingCollateral.mul(_vault.maxLeverage()) < position.size.mul(BASIS_POINTS_DIVISOR)) {
+            // 엄격 모드일 경우 예외처리
             if (_raise) { revert("Vault: maxLeverage exceeded"); }
+            // 아니라면 청산 가능 true, 남은 담보의 크기 리턴
             return (2, marginFees);
         }
 
