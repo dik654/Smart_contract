@@ -246,14 +246,15 @@ contract BasePositionManager is IBasePositionManager, ReentrancyGuard, Governabl
     }
 
     function _transferOutETHWithGasLimitFallbackToWeth(uint256 _amountOut, address payable _receiver) internal {
+        // WETH를 ETH로 변환
         IWETH _weth = IWETH(weth);
         _weth.withdraw(_amountOut);
 
+        // receiver에게 ETH 보내기
         (bool success, /* bytes memory data */) = _receiver.call{ value: _amountOut, gas: ethTransferGasLimit }("");
-
+        // 보내기에 성공했다면 종료
         if (success) { return; }
-
-        // if the transfer failed, re-wrap the token and send it to the receiver
+        // 전송에 실패했다면 WETH로 보내주기
         _weth.deposit{ value: _amountOut }();
         _weth.transfer(address(_receiver), _amountOut);
     }
@@ -278,11 +279,16 @@ contract BasePositionManager is IBasePositionManager, ReentrancyGuard, Governabl
             increasePositionBufferBps
         );
 
+        // 수수료를 부과해야한다면
         if (shouldDeductFee) {
+            // deposit fee를 제외한 넣은 양
             uint256 afterFeeAmount = _amountIn.mul(BASIS_POINTS_DIVISOR.sub(depositFee)).div(BASIS_POINTS_DIVISOR);
             uint256 feeAmount = _amountIn.sub(afterFeeAmount);
+            // C 토큰 주소
             address feeToken = _path[_path.length - 1];
+            // 수수료 풀에 deposit fee만큼 추가
             feeReserves[feeToken] = feeReserves[feeToken].add(feeAmount);
+            // deposit fee를 제외한 넣은 양 리턴
             return afterFeeAmount;
         }
 

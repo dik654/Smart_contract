@@ -132,7 +132,7 @@ contract VaultUtils is IVaultUtils, Governable {
 
     function getFundingFee(address /* _account */, address _collateralToken, address /* _indexToken */, bool /* _isLong */, uint256 _size, uint256 _entryFundingRate) public override view returns (uint256) {
         if (_size == 0) { return 0; }
-        // reserve / pool 비율 - 포지션 유지 비용
+        // 포지션을 열고 있는 동안 발생한 펀딩비율의 변화
         uint256 fundingRate = vault.cumulativeFundingRates(_collateralToken).sub(_entryFundingRate);
         if (fundingRate == 0) { return 0; }
 
@@ -167,23 +167,45 @@ contract VaultUtils is IVaultUtils, Governable {
     // 6. initialAmount is close to targetAmount, action reduces balance largely => low tax
     // 7. initialAmount is above targetAmount, nextAmount is below targetAmount and vice versa
     // 8. a large swap should have similar fees as the same trade split into multiple smaller swaps
+
+    
+    /**
+     * @dev     특정 토큰 수수료 계산 (목표량에 가까워지게 만들수록 감면)
+     * @param   _token  
+     * @param   _usdgDelta  
+     * @param   _feeBasisPoints  
+     * @param   _taxBasisPoints  
+     * @param   _increment  
+     * @return  uint256  
+     */
     function getFeeBasisPoints(address _token, uint256 _usdgDelta, uint256 _feeBasisPoints, uint256 _taxBasisPoints, bool _increment) public override view returns (uint256) {
+        // dynamic fee 설정이 꺼져있다면 기존 수수료 basis point를 그대로 사용
         if (!vault.hasDynamicFees()) { return _feeBasisPoints; }
 
+        // 기존에 들어있던 해당 토큰의 USDG 가치 계산
         uint256 initialAmount = vault.usdgAmounts(_token);
+        // 이번에 추가된 가치 더하기
         uint256 nextAmount = initialAmount.add(_usdgDelta);
+        // 토큰이 빠지는 경우라면 ex) A -> B swap에서 B는 유저에게로 빠져나감
         if (!_increment) {
+            // 추가된 가치가 기존 가치보다 크다면 0 (들어있는 가치보다 더 많이 나갈 순 없으니까)
+            // 아니라면 기존 가치 - 추가된 가치(빠져나갈 가치)
             nextAmount = _usdgDelta > initialAmount ? 0 : initialAmount.sub(_usdgDelta);
         }
 
+        // 해당 토큰이 vault에 들어있는 총 USDG에 어느정도 중요도 비율로 가질지 프로토콜 목표치
         uint256 targetAmount = vault.getTargetUsdgAmount(_token);
+        // 필요없다면 기존 수수료 basis point 사용
         if (targetAmount == 0) { return _feeBasisPoints; }
 
+        // 들어있던 기존 목표치와 프로토콜 목표치간의 차이 계산
         uint256 initialDiff = initialAmount > targetAmount ? initialAmount.sub(targetAmount) : targetAmount.sub(initialAmount);
+        // 이번에 추가된 가치를 추가했을 경우 차이 계산
         uint256 nextDiff = nextAmount > targetAmount ? nextAmount.sub(targetAmount) : targetAmount.sub(nextAmount);
 
-        // action improves relative asset balance
+        // 가치가 추가됐을 경우 차이가 더 작다면 (즉 목표치를 향해 다가가고 있다면)
         if (nextDiff < initialDiff) {
+            // 세금 basis point * 기존 목표치 차이 / 프로토콜 목표치 만큼 기존 수수료 basis point에서 깎아줌
             uint256 rebateBps = _taxBasisPoints.mul(initialDiff).div(targetAmount);
             return rebateBps > _feeBasisPoints ? 0 : _feeBasisPoints.sub(rebateBps);
         }

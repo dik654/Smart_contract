@@ -1177,10 +1177,17 @@ contract Vault is ReentrancyGuard, IVault {
         return vaultUtils.getFeeBasisPoints(_token, _usdgDelta, _feeBasisPoints, _taxBasisPoints, _increment);
     }
 
+    /**
+     * @dev     해당 토큰이 vault에 들어있는 총 USDG에 어느정도 중요도 비율로 가질지 목표치
+     * @param   _token  
+     * @return  uint256  
+     */
     function getTargetUsdgAmount(address _token) public override view returns (uint256) {
         uint256 supply = IERC20(usdg).totalSupply();
         if (supply == 0) { return 0; }
+        // 토큰 중요도 가져오기
         uint256 weight = tokenWeights[_token];
+        // 토큰 중요도 * USDG 개수 / 총 토큰 중요도 
         return weight.mul(supply).div(totalTokenWeights);
     }
 

@@ -87,9 +87,12 @@ library PositionUtils {
         bool _isLong,
         uint256 _price
     ) external {
+        // markPrice = 현재 최대 가격
         uint256 markPrice = _isLong ? IVault(_vault).getMaxPrice(_indexToken) : IVault(_vault).getMinPrice(_indexToken);
+        // long일 때 포지션을 키우는데 목표가격이 현재 가격보다 작으면 에러
         if (_isLong) {
             require(markPrice <= _price, "markPrice > price");
+        // short일 때 포지션을 키우는데 목표가격이 현재 가격보다 크면 에러 
         } else {
             require(markPrice >= _price, "markPrice < price");
         }
