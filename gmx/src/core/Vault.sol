@@ -1035,7 +1035,7 @@ contract Vault is ReentrancyGuard, IVault {
 
         // 코인의 종류에 따라 비율을 다르게 설정
         uint256 _fundingRateFactor = stableTokens[_token] ? stableFundingRateFactor : fundingRateFactor;
-        // 코인 종류에 따른 비율 * reseve pool에 들어있는 토큰 개수 * 지난 interval 개수 / pool에 들어있는 총 토큰 개수
+        // 코인 종류에 따른 비율 * reserve pool에 들어있는 토큰 개수 * 지난 interval 개수 / pool에 들어있는 총 토큰 개수
         return _fundingRateFactor.mul(reservedAmounts[_token]).mul(intervals).div(poolAmount);
     }
 
@@ -1080,26 +1080,34 @@ contract Vault is ReentrancyGuard, IVault {
         (bool hasProfit, uint256 delta) = getDelta(_indexToken, _size, _averagePrice, _isLong, _lastIncreasedTime);
         uint256 nextSize = _size.add(_sizeDelta);
         uint256 divisor;
+        // long이라면
         if (_isLong) {
             divisor = hasProfit ? nextSize.add(delta) : nextSize.sub(delta);
         } else {
             divisor = hasProfit ? nextSize.sub(delta) : nextSize.add(delta);
         }
+        // (nextPrice * nextSize)/ (nextSize +- delta)
         return _nextPrice.mul(nextSize).div(divisor);
     }
 
-    // for longs: nextAveragePrice = (nextPrice * nextSize)/ (nextSize + delta)
-    // for shorts: nextAveragePrice = (nextPrice * nextSize) / (nextSize - delta)
     function getNextGlobalShortAveragePrice(address _indexToken, uint256 _nextPrice, uint256 _sizeDelta) public view returns (uint256) {
+        // for longs: nextAveragePrice = (nextPrice * nextSize)/ (nextSize + delta)
+        // for shorts: nextAveragePrice = (nextPrice * nextSize) / (nextSize - delta)
+        // short 크기 
         uint256 size = globalShortSizes[_indexToken];
+        // short 평균 가격 가져오기
         uint256 averagePrice = globalShortAveragePrices[_indexToken];
+        // 평균가와 다음 가격의 차이
         uint256 priceDelta = averagePrice > _nextPrice ? averagePrice.sub(_nextPrice) : _nextPrice.sub(averagePrice);
+        // short 크기 * 차이 / 평균가
         uint256 delta = size.mul(priceDelta).div(averagePrice);
+        // 다음 가격이 평균 가격보다 작으면 short
         bool hasProfit = averagePrice > _nextPrice;
 
         uint256 nextSize = size.add(_sizeDelta);
+        // short이면 (다음 크기 - delta), long이면 (다음 크기 + delta)
         uint256 divisor = hasProfit ? nextSize.sub(delta) : nextSize.add(delta);
-
+        // 다음 가격 * 다음 크기 / 다음 크기 +- delta
         return _nextPrice.mul(nextSize).div(divisor);
     }
 
@@ -1107,10 +1115,14 @@ contract Vault is ReentrancyGuard, IVault {
         uint256 size = globalShortSizes[_token];
         if (size == 0) { return (false, 0); }
 
+        // 토큰의 최대 가격
         uint256 nextPrice = getMaxPrice(_token);
         uint256 averagePrice = globalShortAveragePrices[_token];
+        // 평균 short 가격과 토큰 가격간의 차이
         uint256 priceDelta = averagePrice > nextPrice ? averagePrice.sub(nextPrice) : nextPrice.sub(averagePrice);
+        // 크기 * (평균 short 가격과 토큰 가격간의 차이) 
         uint256 delta = size.mul(priceDelta).div(averagePrice);
+        // short 여부
         bool hasProfit = averagePrice > nextPrice;
 
         return (hasProfit, delta);
