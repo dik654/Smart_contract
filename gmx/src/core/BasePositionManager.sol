@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-
 pragma solidity ^0.6.0;
 
 import "../libraries/math/SafeMath.sol";
@@ -298,7 +297,6 @@ contract BasePositionManager is IBasePositionManager, ReentrancyGuard, Governabl
     function _emitIncreasePositionReferral(address _account, uint256 _sizeDelta) internal {
         address _referralStorage = referralStorage;
         if (_referralStorage == address(0)) { return; }
-
 
         (bytes32 referralCode, address referrer) = IReferralStorage(_referralStorage).getTraderReferralInfo(_account);
         if (referralCode == bytes32(0)) { return; }

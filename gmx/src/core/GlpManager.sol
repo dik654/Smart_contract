@@ -228,8 +228,7 @@ contract GlpManager is ReentrancyGuard, Governable, IGlpManager {
         return vaultAveragePrice.mul(BASIS_POINTS_DIVISOR.sub(_shortsTrackerAveragePriceWeight))
             .add(shortsTrackerAveragePrice.mul(_shortsTrackerAveragePriceWeight))
             .div(BASIS_POINTS_DIVISOR);
-    }
-
+    }   
     
     /**
      * @dev     유동성 공급 후 GLP 민팅
