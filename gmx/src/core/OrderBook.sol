@@ -279,6 +279,7 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
         emit UpdateGov(_gov);
     }
 
+
     function getSwapOrder(address _account, uint256 _orderIndex) override public view returns (
         address path0,
         address path1,
@@ -290,6 +291,7 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
         bool shouldUnwrap,
         uint256 executionFee
     ) {
+        // 주문을 가져와서 보여주기
         SwapOrder memory order = swapOrders[_account][_orderIndex];
         return (
             order.path.length > 0 ? order.path[0] : address(0),
@@ -314,19 +316,29 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
         bool _shouldWrap,
         bool _shouldUnwrap
     ) external payable nonReentrant {
+        // A -> B, A -> B -> C
         require(_path.length == 2 || _path.length == 3, "OrderBook: invalid _path.length");
+        // 시작과 끝 토큰은 달라야함. A != B || A != C
         require(_path[0] != _path[_path.length - 1], "OrderBook: invalid _path");
+        // 넣는 토큰 개수가 0보다 커야함
         require(_amountIn > 0, "OrderBook: invalid _amountIn");
+        // 실행 수수료가 최소 실행수수료 보다 커야함
         require(_executionFee >= minExecutionFee, "OrderBook: insufficient execution fee");
 
-        // always need this call because of mandatory executionFee user has to transfer in ETH
+        // 넣은 ETH를 WETH로 변환
         _transferInETH();
 
+        // A를 WETH로 시작할 경우
         if (_shouldWrap) {
+            // A는 WETH여야하고
             require(_path[0] == weth, "OrderBook: only weth could be wrapped");
+            // 넣은 ETH의 양 == 실행수수료 + WETH 개수여야함
             require(msg.value == _executionFee.add(_amountIn), "OrderBook: incorrect value transferred");
         } else {
+            // 다른 토큰으로 시작할 경우 
+            // ETH로는 실행 수수료만 넣고
             require(msg.value == _executionFee, "OrderBook: incorrect execution fee transferred");
+            // 토큰을 OrderBook으로 전송
             IRouter(router).pluginTransfer(_path[0], msg.sender, address(this), _amountIn);
         }
 
@@ -343,6 +355,7 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
         bool _shouldUnwrap,
         uint256 _executionFee
     ) private {
+        // swap 주문 구조체 생성
         uint256 _orderIndex = swapOrdersIndex[_account];
         SwapOrder memory order = SwapOrder(
             _account,
@@ -354,6 +367,7 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
             _shouldUnwrap,
             _executionFee
         );
+        // 주문 구조체 매핑
         swapOrdersIndex[_account] = _orderIndex.add(1);
         swapOrders[_account][_orderIndex] = order;
 
@@ -370,6 +384,12 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
         );
     }
 
+    /**
+     * @dev     여러 주문들 동시에 취소
+     * @param   _swapOrderIndexes  
+     * @param   _increaseOrderIndexes  
+     * @param   _decreaseOrderIndexes  
+     */
     function cancelMultiple(
         uint256[] memory _swapOrderIndexes,
         uint256[] memory _increaseOrderIndexes,
@@ -387,11 +407,15 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
     }
 
     function cancelSwapOrder(uint256 _orderIndex) public nonReentrant {
+        // 내가 올린 주문 불러오기
         SwapOrder memory order = swapOrders[msg.sender][_orderIndex];
         require(order.account != address(0), "OrderBook: non-existent order");
 
+        // 주문 삭제
         delete swapOrders[msg.sender][_orderIndex];
 
+        // 주문 토큰 반환
+        // 실행 수수료 반환
         if (order.path[0] == weth) {
             _transferOutETH(order.executionFee.add(order.amountIn), msg.sender);
         } else {
@@ -413,11 +437,12 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
     }
 
     function getUsdgMinPrice(address _otherToken) public view returns (uint256) {
-        // USDG_PRECISION is the same as 1 USDG
+        // USDG 전체를 인수로 들어온 토큰으로 변환했을 때 받을 수 있는 최소 토큰 개수
         uint256 redemptionAmount = IVault(vault).getRedemptionAmount(_otherToken, USDG_PRECISION);
+        // 인수로 들어온 토큰의 최소 가격
         uint256 otherTokenPrice = IVault(vault).getMinPrice(_otherToken);
-
         uint256 otherTokenDecimals = IVault(vault).tokenDecimals(_otherToken);
+        // 총 가치 = USDG를 변환했을 때 받을 수 있는 최소 토큰 개수 * 최소 토큰 가격
         return redemptionAmount.mul(otherTokenPrice).div(10 ** otherTokenDecimals);
     }
 
@@ -425,12 +450,15 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
         address[] memory _path,
         uint256 _triggerRatio
     ) public view returns (bool) {
+        // A -> B, A -> B -> C만 가능
         require(_path.length == 2 || _path.length == 3, "OrderBook: invalid _path.length");
 
         // limit orders don't need this validation because minOut is enough
         // so this validation handles scenarios for stop orders only
         // when a user wants to swap when a price of tokenB increases relative to tokenA
+        // 시작 토큰
         address tokenA = _path[0];
+        // 종료 토큰
         address tokenB = _path[_path.length - 1];
         uint256 tokenAPrice;
         uint256 tokenBPrice;
@@ -440,29 +468,39 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
         // 2. In complex scenarios with path=[USDG, BNB, BTC] we need to know how much BNB we'll get for provided USDG
         // to know how much BTC will be received
         // That's why in such scenario BNB should be used to determine price of USDG
+        
+        // 시작 토큰 가치 계산
+        // 시작 토큰이 USDG라면
         if (tokenA == usdg) {
-            // with both _path.length == 2 or 3 we need usdg price against _path[1]
+            // USDG는 price feed가 없어서 swap한 다음 토큰의 USDG 환급 가치로 계산
             tokenAPrice = getUsdgMinPrice(_path[1]);
         } else {
+            // 시작 토큰이 일반 토큰이라면 토큰의 최소 가격
             tokenAPrice = IVault(vault).getMinPrice(tokenA);
         }
 
+        // 종료 토큰 가치 계산
+        // 1USDG는 1달러이므로 PRICE_PRECISION 사용
         if (tokenB == usdg) {
             tokenBPrice = PRICE_PRECISION;
         } else {
+            // 종료 토큰의 최대 가격
             tokenBPrice = IVault(vault).getMaxPrice(tokenB);
         }
 
         uint256 currentRatio = tokenBPrice.mul(PRICE_PRECISION).div(tokenAPrice);
 
+        // _triggerRatio는 사용자가 원하는 가격 비율
         bool isValid = currentRatio > _triggerRatio;
         return isValid;
     }
 
     function updateSwapOrder(uint256 _orderIndex, uint256 _minOut, uint256 _triggerRatio, bool _triggerAboveThreshold) external nonReentrant {
+        // 주문 포인터 가져오기
         SwapOrder storage order = swapOrders[msg.sender][_orderIndex];
         require(order.account != address(0), "OrderBook: non-existent order");
 
+        // 주문 수정
         order.minOut = _minOut;
         order.triggerRatio = _triggerRatio;
         order.triggerAboveThreshold = _triggerAboveThreshold;
@@ -481,9 +519,11 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
     }
 
     function executeSwapOrder(address _account, uint256 _orderIndex, address payable _feeReceiver) override external nonReentrant {
+        // 주문 가져오기
         SwapOrder memory order = swapOrders[_account][_orderIndex];
         require(order.account != address(0), "OrderBook: non-existent order");
 
+        // 트리거 가격이 있는 경우
         if (order.triggerAboveThreshold) {
             // gas optimisation
             // order.minAmount should prevent wrong price execution in case of simple limit order
@@ -493,19 +533,25 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
             );
         }
 
+        // 주문 지우기
         delete swapOrders[_account][_orderIndex];
 
+        // vault로 시작 토큰 보내기
         IERC20(order.path[0]).safeTransfer(vault, order.amountIn);
 
+        // 마지막 토큰이 WETH이고 ETH로 unwrap해야한다면
         uint256 _amountOut;
         if (order.path[order.path.length - 1] == weth && order.shouldUnwrap) {
+            // swap 실시하여 WETH를 orderbook 컨트랙트에 넣은 뒤
             _amountOut = _swap(order.path, order.minOut, address(this));
+            // orderbook에서 ETH로 변환하여 유저에게 전달
             _transferOutETH(_amountOut, payable(order.account));
         } else {
+            // swap 실시하여 토큰을 유저에게 전달
             _amountOut = _swap(order.path, order.minOut, order.account);
         }
 
-        // pay executor
+        // 트랜잭션 실행자에게 이더 전달
         _transferOutETH(order.executionFee, _feeReceiver);
 
         emit ExecuteSwapOrder(
@@ -599,33 +645,46 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
         uint256 _executionFee,
         bool _shouldWrap
     ) external payable nonReentrant {
-        // always need this call because of mandatory executionFee user has to transfer in ETH
+        // ETH를 WETH로 변환
         _transferInETH();
 
+        // 제시한 실행 수수료가 최소 실행 수수료보다 큰지 확인
         require(_executionFee >= minExecutionFee, "OrderBook: insufficient execution fee");
+        // WETH로 wrapping해야할 경우
         if (_shouldWrap) {
+            // 시작 토큰은 WETH여야하고
             require(_path[0] == weth, "OrderBook: only weth could be wrapped");
+            // 넣은 ETH는 실행 수수료 + 추가할 양
             require(msg.value == _executionFee.add(_amountIn), "OrderBook: incorrect value transferred");
         } else {
+            // 일반 토큰을 사용할 경우 ETH로는 수수료만 보내고
             require(msg.value == _executionFee, "OrderBook: incorrect execution fee transferred");
+            // 일반 토큰 orderbook으로 전달
             IRouter(router).pluginTransfer(_path[0], msg.sender, address(this), _amountIn);
         }
 
         address _purchaseToken = _path[_path.length - 1];
         uint256 _purchaseTokenAmount;
+        // 토큰을 swap해야하는 경우
         if (_path.length > 1) {
+            // swap 시작 토큰과 마지막 토큰이 달라야하고
             require(_path[0] != _purchaseToken, "OrderBook: invalid _path");
+            // 시작 토큰을 vault로 넣고 swap실시
             IERC20(_path[0]).safeTransfer(vault, _amountIn);
+            // swap한 토큰의 양만큼을 포지션 증가에 사용
             _purchaseTokenAmount = _swap(_path, _minOut, address(this));
         } else {
+            // swap할 필요가 없다면 토큰 그대로 포지션 증가에 사용
             _purchaseTokenAmount = _amountIn;
         }
 
         {
+            // 토큰의 가치는 기준 최소 토큰 가치보다 커야한다 
             uint256 _purchaseTokenAmountUsd = IVault(vault).tokenToUsdMin(_purchaseToken, _purchaseTokenAmount);
             require(_purchaseTokenAmountUsd >= minPurchaseTokenAmountUsd, "OrderBook: insufficient collateral");
         }
 
+        // 포지션 증가 주문 생성
         _createIncreaseOrder(
             msg.sender,
             _purchaseToken,
@@ -652,7 +711,9 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
         bool _triggerAboveThreshold,
         uint256 _executionFee
     ) private {
+        // 가장 최근에 추가된 주문 index가져오기
         uint256 _orderIndex = increaseOrdersIndex[msg.sender];
+        // 주문 구조체 생성
         IncreaseOrder memory order = IncreaseOrder(
             _account,
             _purchaseToken,
@@ -665,6 +726,7 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
             _triggerAboveThreshold,
             _executionFee
         );
+        // 주문 구조체 매핑
         increaseOrdersIndex[_account] = _orderIndex.add(1);
         increaseOrders[_account][_orderIndex] = order;
 
@@ -684,9 +746,11 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
     }
 
     function updateIncreaseOrder(uint256 _orderIndex, uint256 _sizeDelta, uint256 _triggerPrice, bool _triggerAboveThreshold) external nonReentrant {
+        // 주문 구조체 포인터 접근
         IncreaseOrder storage order = increaseOrders[msg.sender][_orderIndex];
         require(order.account != address(0), "OrderBook: non-existent order");
 
+        // 데이터 변경
         order.triggerPrice = _triggerPrice;
         order.triggerAboveThreshold = _triggerAboveThreshold;
         order.sizeDelta = _sizeDelta;
@@ -704,14 +768,19 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
     }
 
     function cancelIncreaseOrder(uint256 _orderIndex) public nonReentrant {
+        // 본인의 주문이 유효한지 체크
         IncreaseOrder memory order = increaseOrders[msg.sender][_orderIndex];
         require(order.account != address(0), "OrderBook: non-existent order");
 
+        // 주문 삭제
         delete increaseOrders[msg.sender][_orderIndex];
 
+        // WETH를 사용했을 경우
         if (order.purchaseToken == weth) {
+            // ETH로 반환
             _transferOutETH(order.executionFee.add(order.purchaseTokenAmount), msg.sender);
         } else {
+            // 토큰일 경우 토큰을 반환받고, 실행 수수료는 ETH로 받는다
             IERC20(order.purchaseToken).safeTransfer(msg.sender, order.purchaseTokenAmount);
             _transferOutETH(order.executionFee, msg.sender);
         }

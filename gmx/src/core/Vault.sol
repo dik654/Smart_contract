@@ -916,7 +916,9 @@ contract Vault is ReentrancyGuard, IVault {
     }
 
     function getRedemptionAmount(address _token, uint256 _usdgAmount) public override view returns (uint256) {
+        // 토큰의 최대 가격
         uint256 price = getMaxPrice(_token);
+        // 받을 수 있는 최소 토큰 개수 = (USDG 개수 * USDG의 가치) / 최대 토큰 가격
         uint256 redemptionAmount = _usdgAmount.mul(PRICE_PRECISION).div(price);
         return adjustForDecimals(redemptionAmount, usdg, _token);
     }
