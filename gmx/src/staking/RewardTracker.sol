@@ -11,6 +11,7 @@ import "./interfaces/IRewardDistributor.sol";
 import "./interfaces/IRewardTracker.sol";
 import "../access/Governable.sol";
 
+// GMX token 관리
 contract RewardTracker is IERC20, ReentrancyGuard, IRewardTracker, Governable {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
@@ -162,10 +163,12 @@ contract RewardTracker is IERC20, ReentrancyGuard, IRewardTracker, Governable {
     }
 
     function claimable(address _account) public override view returns (uint256) {
+        // 유저가 스테이킹한 개수
         uint256 stakedAmount = stakedAmounts[_account];
         if (stakedAmount == 0) {
             return claimableReward[_account];
         }
+        // 총 gmx
         uint256 supply = totalSupply;
         uint256 pendingRewards = IRewardDistributor(distributor).pendingRewards().mul(PRECISION);
         uint256 nextCumulativeRewardPerToken = cumulativeRewardPerToken.add(pendingRewards.div(supply));
@@ -204,6 +207,7 @@ contract RewardTracker is IERC20, ReentrancyGuard, IRewardTracker, Governable {
         require(_account != address(0), "RewardTracker: burn from the zero address");
 
         balances[_account] = balances[_account].sub(_amount, "RewardTracker: burn amount exceeds balance");
+        // 총 gmx - 태울 양
         totalSupply = totalSupply.sub(_amount);
 
         emit Transfer(_account, address(0), _amount);
@@ -213,6 +217,7 @@ contract RewardTracker is IERC20, ReentrancyGuard, IRewardTracker, Governable {
         require(_sender != address(0), "RewardTracker: transfer from the zero address");
         require(_recipient != address(0), "RewardTracker: transfer to the zero address");
 
+        // private mode에서는 허용된 핸들러만 실행 가능
         if (inPrivateTransferMode) { _validateHandler(); }
 
         balances[_sender] = balances[_sender].sub(_amount, "RewardTracker: transfer amount exceeds balance");
@@ -236,69 +241,93 @@ contract RewardTracker is IERC20, ReentrancyGuard, IRewardTracker, Governable {
 
     function _stake(address _fundingAccount, address _account, address _depositToken, uint256 _amount) private {
         require(_amount > 0, "RewardTracker: invalid _amount");
+        // 허용된 토큰만 deposit 가능
         require(isDepositToken[_depositToken], "RewardTracker: invalid _depositToken");
 
+        // 이 컨트랙트에 토큰 전송
         IERC20(_depositToken).safeTransferFrom(_fundingAccount, address(this), _amount);
 
+        // 유저 리워드 갱신
         _updateRewards(_account);
 
+        // 유저가 스테이킹한 총 토큰 양(모든 토큰) += 이번에 추가할 양
         stakedAmounts[_account] = stakedAmounts[_account].add(_amount);
+        // 해당 토큰 종류로 스테이킹한 양
         depositBalances[_account][_depositToken] = depositBalances[_account][_depositToken].add(_amount);
+        // 해당 토큰으로 스테이킹된 총량
         totalDepositSupply[_depositToken] = totalDepositSupply[_depositToken].add(_amount);
 
+        // gmx 민팅
         _mint(_account, _amount);
     }
 
     function _unstake(address _account, address _depositToken, uint256 _amount, address _receiver) private {
         require(_amount > 0, "RewardTracker: invalid _amount");
         require(isDepositToken[_depositToken], "RewardTracker: invalid _depositToken");
-
+        // 유저 리워드 갱신
         _updateRewards(_account);
 
+        // 유저 stake 총량이 unstake량보다 커야한다
         uint256 stakedAmount = stakedAmounts[_account];
         require(stakedAmounts[_account] >= _amount, "RewardTracker: _amount exceeds stakedAmount");
 
+        // 꺼냈으므로 stake 총량 - unstake하려는 양
         stakedAmounts[_account] = stakedAmount.sub(_amount);
 
         uint256 depositBalance = depositBalances[_account][_depositToken];
         require(depositBalance >= _amount, "RewardTracker: _amount exceeds depositBalance");
+        // 해당 토큰 deposit balance 감소(stake한 특정 토큰)
         depositBalances[_account][_depositToken] = depositBalance.sub(_amount);
+        // 컨트랙트에 deposit된 총량 unstake한만큼 감소
         totalDepositSupply[_depositToken] = totalDepositSupply[_depositToken].sub(_amount);
 
+        // unstake한만큼 gmx 태우고
         _burn(_account, _amount);
+        // 동일한 양만큼 특정 토큰 전송
         IERC20(_depositToken).safeTransfer(_receiver, _amount);
     }
 
     function _updateRewards(address _account) private {
+        // rewardTracker에 쌓여있는 staking 리워드 이 컨트랙트로 전송(vesting)
         uint256 blockReward = IRewardDistributor(distributor).distribute();
 
         uint256 supply = totalSupply;
         uint256 _cumulativeRewardPerToken = cumulativeRewardPerToken;
         if (supply > 0 && blockReward > 0) {
+            // 누적으로 계산하고있던 토큰 보상 = 이전 누적으로 계산하고있던 토큰 보상 + ((rewardTracker에서 꺼내온 보상 / 총 gmx 개수) * 정밀도)로 업데이트
             _cumulativeRewardPerToken = _cumulativeRewardPerToken.add(blockReward.mul(PRECISION).div(supply));
             cumulativeRewardPerToken = _cumulativeRewardPerToken;
         }
 
         // cumulativeRewardPerToken can only increase
         // so if cumulativeRewardPerToken is zero, it means there are no rewards yet
+        // 아직 쌓여있는 보상이 없는 경우 종료
         if (_cumulativeRewardPerToken == 0) {
             return;
         }
 
         if (_account != address(0)) {
             uint256 stakedAmount = stakedAmounts[_account];
+            // 이번 유저 보상 = 스테이킹된 양 * (rewardTracker에서 꺼내온 보상 / 총 gmx 개수) 
+            // 즉 (스테이킹된 양 / 총 gmx)는 전체에서 유저의 비율 * 이번에 꺼내온 보상으로 계산
             uint256 accountReward = stakedAmount.mul(_cumulativeRewardPerToken.sub(previousCumulatedRewardPerToken[_account])).div(PRECISION);
+            // 계정이 받을 수 있는 보상 += 방금 계산한 보상
             uint256 _claimableReward = claimableReward[_account].add(accountReward);
 
+            // 유저가 받을 수 있는 보상 기록
             claimableReward[_account] = _claimableReward;
+            // 이전 누적 토큰 보상 계산 업데이트 
             previousCumulatedRewardPerToken[_account] = _cumulativeRewardPerToken;
 
             if (_claimableReward > 0 && stakedAmounts[_account] > 0) {
+                // 유저의 누적 리워드 += 이번 리워드
                 uint256 nextCumulativeReward = cumulativeRewards[_account].add(accountReward);
 
+                // 업데이트된 유저의 평균 스테이킹된 양 = 기존 유저의 평균 스테이킹된 양 * (기존 유저의 누적 리워드 / 갱신된 유저의 누적 리워드) + (유저가 스테이킹한 양 * 이번 유저 보상 / 갱신된 유저 리워드)
                 averageStakedAmounts[_account] = averageStakedAmounts[_account].mul(cumulativeRewards[_account]).div(nextCumulativeReward)
                     .add(stakedAmount.mul(accountReward).div(nextCumulativeReward));
 
+                // 누적 리워드 업데이트
                 cumulativeRewards[_account] = nextCumulativeReward;
             }
         }
