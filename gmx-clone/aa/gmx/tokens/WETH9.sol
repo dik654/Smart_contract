@@ -24,8 +24,8 @@ contract WETH9 {
     function withdraw(uint256 wad) public {
         require(balanceOf[msg.sender] >= wad);
         balanceOf[msg.sender] -= wad;
-        uint256 _wad = wad / (1e18 * 100000);
-        (bool success, ) = payable(msg.sender).call{value: _wad}("");
+        uint256 _wad = wad / 1e18 * 100000;
+        (bool success, ) = msg.sender.call{value: _wad}("");
         require(success, "withdraw ETH fail");
         emit Withdrawal(msg.sender, _wad);
     }

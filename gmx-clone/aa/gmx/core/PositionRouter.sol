@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.6.0;
+pragma solidity ^0.8.0;
 
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "../libraries/token/SafeERC20.sol";
 import "./interfaces/IRouter.sol";
 import "./interfaces/IVault.sol";
 import "./interfaces/IPositionRouter.sol";
@@ -12,6 +14,7 @@ import "./BasePositionManager.sol";
 
 // createIncreasePosition, createDecreasePosition 주로 사용
 contract PositionRouter is BasePositionManager, IPositionRouter {
+    using SafeERC20 for IERC20;
     using Address for address;
 
     struct IncreasePositionRequest {
@@ -185,7 +188,7 @@ contract PositionRouter is BasePositionManager, IPositionRouter {
         address _shortsTracker,
         uint256 _depositFee,
         uint256 _minExecutionFee
-    ) public BasePositionManager(_vault, _router, _shortsTracker, _weth, _depositFee) {
+    ) BasePositionManager(_vault, _router, _shortsTracker, _weth, _depositFee) {
         minExecutionFee = _minExecutionFee;
     }
 
@@ -370,7 +373,7 @@ contract PositionRouter is BasePositionManager, IPositionRouter {
         // msg.value 이더 WETH로 전환
         _transferInETH();
         // 수수료를 제외한 ETH의 양 계산
-        uint256 amountIn = msg.value.sub(_executionFee);
+        uint256 amountIn = msg.value - _executionFee;
 
         // 포지션 확장 요청 등록
         return _createIncreasePosition(
@@ -479,8 +482,8 @@ contract PositionRouter is BasePositionManager, IPositionRouter {
             request.isLong,
             request.acceptablePrice,
             request.executionFee,
-            block.number.sub(request.blockNumber),
-            block.timestamp.sub(request.blockTime)
+            block.number - request.blockNumber,
+            block.timestamp - request.blockTime
         );
 
         // 원할 경우 callbackTarget 컨트랙트에 _key를 msg.data로 하여 call할 수 있도록 함
@@ -524,8 +527,8 @@ contract PositionRouter is BasePositionManager, IPositionRouter {
             request.isLong,
             request.acceptablePrice,
             request.executionFee,
-            block.number.sub(request.blockNumber),
-            block.timestamp.sub(request.blockTime)
+            block.number - request.blockNumber,
+            block.timestamp - request.blockTime
         );
 
         // 콜백이 있다면 콜백 실행
@@ -581,8 +584,8 @@ contract PositionRouter is BasePositionManager, IPositionRouter {
             request.acceptablePrice,
             request.minOut,
             request.executionFee,
-            block.number.sub(request.blockNumber),
-            block.timestamp.sub(request.blockTime)
+            block.number - request.blockNumber,
+            block.timestamp - request.blockTime
         );
 
         // 콜백이 있다면 콜백 실행
@@ -615,8 +618,8 @@ contract PositionRouter is BasePositionManager, IPositionRouter {
             request.acceptablePrice,
             request.minOut,
             request.executionFee,
-            block.number.sub(request.blockNumber),
-            block.timestamp.sub(request.blockTime)
+            block.number - request.blockNumber,
+            block.timestamp - request.blockTime
         );
 
         _callRequestCallback(request.callbackTarget, _key, false, false);
@@ -639,7 +642,7 @@ contract PositionRouter is BasePositionManager, IPositionRouter {
     }
 
     function _validateExecution(uint256 _positionBlockNumber, uint256 _positionBlockTime, address _account) internal view returns (bool) {
-        if (_positionBlockTime.add(maxTimeDelay) <= block.timestamp) {
+        if (_positionBlockTime + maxTimeDelay <= block.timestamp) {
             revert("expired");
         }
 
@@ -662,13 +665,13 @@ contract PositionRouter is BasePositionManager, IPositionRouter {
         // 키퍼가 실행한게 맞다면
         if (isKeeperCall) {
             // 실행 블록 쿨다운이 끝난 이후 실행했다면 validate
-            return _positionBlockNumber.add(minBlockDelayKeeper) <= block.number;
+            return _positionBlockNumber + minBlockDelayKeeper <= block.number;
         }
 
         // 인수의 account는 키퍼의 주소면 안됨
         require(msg.sender == _account, "403");
         // 실행 시간 쿨다운이 끝나기 전에 실행했는지 체크 
-        require(_positionBlockTime.add(minTimeDelayPublic) <= block.timestamp, "delay");
+        require(_positionBlockTime + minTimeDelayPublic <= block.timestamp, "delay");
 
         return true;
     }
@@ -733,7 +736,7 @@ contract PositionRouter is BasePositionManager, IPositionRouter {
      */
     function _storeIncreasePositionRequest(IncreasePositionRequest memory _request) internal returns (uint256, bytes32) {
         address account = _request.account;
-        uint256 index = increasePositionsIndex[account].add(1);
+        uint256 index = increasePositionsIndex[account] + 1;
         increasePositionsIndex[account] = index;
         bytes32 key = getRequestKey(account, index);
 
@@ -752,7 +755,7 @@ contract PositionRouter is BasePositionManager, IPositionRouter {
     function _storeDecreasePositionRequest(DecreasePositionRequest memory _request) internal returns (uint256, bytes32) {
         address account = _request.account;
         // position request 매핑 과정
-        uint256 index = decreasePositionsIndex[account].add(1);
+        uint256 index = decreasePositionsIndex[account] + 1;
         decreasePositionsIndex[account] = index;
         // keccak256(abi.encodePacked(_account, _index))
         bytes32 key = getRequestKey(account, index);

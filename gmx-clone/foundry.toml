@@ -1,6 +1,9 @@
 [profile.default]
 src = "src"
 out = "out"
+viaIR = true
+optimizer_runs = 100
+auto_detect_solc = true
 libs = ["lib"]
 remapping = [
     '@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/',

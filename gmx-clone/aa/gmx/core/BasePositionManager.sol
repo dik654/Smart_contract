@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.6.0;
+pragma solidity ^0.8.0;
 
-import "../libraries/math/SafeMath.sol";
-import "../libraries/token/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../tokens/interfaces/IWETH.sol";
 import "../libraries/token/SafeERC20.sol";
 import "../libraries/utils/Address.sol";
@@ -17,8 +16,6 @@ import "./interfaces/IBasePositionManager.sol";
 import "../access/Governable.sol";
 
 contract BasePositionManager is IBasePositionManager, ReentrancyGuard, Governable {
-
-    using SafeMath for uint256;
     using SafeERC20 for IERC20;
     using Address for address payable;
 
@@ -71,7 +68,7 @@ contract BasePositionManager is IBasePositionManager, ReentrancyGuard, Governabl
         address _shortsTracker,
         address _weth,
         uint256 _depositFee
-    ) public {
+    ) {
         vault = _vault;
         router = _router;
         weth = _weth;
@@ -143,12 +140,12 @@ contract BasePositionManager is IBasePositionManager, ReentrancyGuard, Governabl
 
         if (_isLong) {
             uint256 maxGlobalLongSize = maxGlobalLongSizes[_indexToken];
-            if (maxGlobalLongSize > 0 && IVault(vault).guaranteedUsd(_indexToken).add(_sizeDelta) > maxGlobalLongSize) {
+            if (maxGlobalLongSize > 0 && IVault(vault).guaranteedUsd(_indexToken) + _sizeDelta > maxGlobalLongSize) {
                 revert("max longs exceeded");
             }
         } else {
             uint256 maxGlobalShortSize = maxGlobalShortSizes[_indexToken];
-            if (maxGlobalShortSize > 0 && IVault(vault).globalShortSizes(_indexToken).add(_sizeDelta) > maxGlobalShortSize) {
+            if (maxGlobalShortSize > 0 && IVault(vault).globalShortSizes(_indexToken) + _sizeDelta > maxGlobalShortSize) {
                 revert("max shorts exceeded");
             }
         }
@@ -289,12 +286,12 @@ contract BasePositionManager is IBasePositionManager, ReentrancyGuard, Governabl
         // 수수료를 부과해야한다면
         if (shouldDeductFee) {
             // deposit fee를 제외한 넣은 양
-            uint256 afterFeeAmount = _amountIn.mul(BASIS_POINTS_DIVISOR.sub(depositFee)).div(BASIS_POINTS_DIVISOR);
-            uint256 feeAmount = _amountIn.sub(afterFeeAmount);
+            uint256 afterFeeAmount = _amountIn * (BASIS_POINTS_DIVISOR - depositFee) / BASIS_POINTS_DIVISOR;
+            uint256 feeAmount = _amountIn - afterFeeAmount;
             // C 토큰 주소
             address feeToken = _path[_path.length - 1];
             // 수수료 풀에 deposit fee만큼 추가
-            feeReserves[feeToken] = feeReserves[feeToken].add(feeAmount);
+            feeReserves[feeToken] = feeReserves[feeToken] + feeAmount;
             // deposit fee를 제외한 넣은 양 리턴
             return afterFeeAmount;
         }
@@ -327,19 +324,19 @@ contract BasePositionManager is IBasePositionManager, ReentrancyGuard, Governabl
         if (size == 0) { return false; }
 
         // 크기 변화량을 추가하여 다음 크기 계산
-        uint256 nextSize = size.add(_sizeDelta);
+        uint256 nextSize = size + _sizeDelta;
         // 담보로 사용될 토큰이 추가될 경우 담보 변화량 계산
         uint256 collateralDelta = IVault(vault).tokenToUsdMin(collateralToken, _amountIn);
         // 담보 변화량을 추가한 다음 담보 계산
-        uint256 nextCollateral = collateral.add(collateralDelta);
+        uint256 nextCollateral = collateral + collateralDelta;
 
         // 이전 레버리지(크기 / 담보)
-        uint256 prevLeverage = size.mul(BASIS_POINTS_DIVISOR).div(collateral);
+        uint256 prevLeverage = size * BASIS_POINTS_DIVISOR / collateral;
         // allow for a maximum of a increasePositionBufferBps decrease since there might be some swap fees taken from the collateral
         // 이후 레버리지 (다음 크기 + increasePositionBufferBps / 다음 담보)
         // increasePositionBufferBps는 사용자가 포지션을 증가시키려고 할 때, 시장 변동성이나 스왑 수수료 등으로 인해 레버리지가 예상보다 약간 더 낮아질 경우
         // 수수료를 면제해주기 위한 Basis point
-        uint256 nextLeverage = nextSize.mul(BASIS_POINTS_DIVISOR + _increasePositionBufferBps).div(nextCollateral);
+        uint256 nextLeverage = nextSize * (BASIS_POINTS_DIVISOR + _increasePositionBufferBps) / nextCollateral;
 
         emit LeverageDecreased(collateralDelta, prevLeverage, nextLeverage);
 

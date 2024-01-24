@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
 
-import "../libraries/math/SafeMath.sol";
-import "../libraries/token/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../libraries/token/SafeERC20.sol";
 import "../libraries/utils/ReentrancyGuard.sol";
 
@@ -12,10 +12,8 @@ import "../tokens/interfaces/IUSDG.sol";
 import "../tokens/interfaces/IMintable.sol";
 import "../access/Governable.sol";
 
-pragma solidity 0.6.12;
 
 contract GlpManager is ReentrancyGuard, Governable, IGlpManager {
-    using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
     uint256 public constant PRICE_PRECISION = 10 ** 30;
@@ -59,7 +57,7 @@ contract GlpManager is ReentrancyGuard, Governable, IGlpManager {
         uint256 amountOut
     );
 
-    constructor(address _vault, address _usdg, address _glp, address _shortsTracker, uint256 _cooldownDuration) public {
+    constructor(address _vault, address _usdg, address _glp, address _shortsTracker, uint256 _cooldownDuration) {
         gov = msg.sender;
         vault = IVault(_vault);
         usdg = _usdg;
@@ -114,7 +112,7 @@ contract GlpManager is ReentrancyGuard, Governable, IGlpManager {
     function getPrice(bool _maximise) external view returns (uint256) {
         uint256 aum = getAum(_maximise);
         uint256 supply = IERC20(glp).totalSupply();
-        return aum.mul(GLP_PRECISION).div(supply);
+        return aum * GLP_PRECISION / supply;
     }
 
     /**
@@ -132,7 +130,7 @@ contract GlpManager is ReentrancyGuard, Governable, IGlpManager {
 
     function getAumInUsdg(bool maximise) public override view returns (uint256) {
         uint256 aum = getAum(maximise);
-        return aum.mul(10 ** USDG_DECIMALS).div(PRICE_PRECISION);
+        return aum * 10 ** USDG_DECIMALS / PRICE_PRECISION;
     }
 
     function getAum(bool maximise) public view returns (uint256) {
@@ -158,7 +156,7 @@ contract GlpManager is ReentrancyGuard, Governable, IGlpManager {
 
             // 스테이블 코인이라면 AUM에 추가
             if (_vault.stableTokens(token)) {
-                aum = aum.add(poolAmount.mul(price).div(10 ** decimals));
+                aum = aum + (poolAmount * price / 10 ** decimals);
             } else {
                 // 일반 토큰이라면 글로벌 short 크기를 가져온 뒤
                 // add global short profit / loss
@@ -170,35 +168,35 @@ contract GlpManager is ReentrancyGuard, Governable, IGlpManager {
                     // long일 경우
                     if (!hasProfit) {
                         // AUM + 변화량
-                        aum = aum.add(delta);
+                        aum = aum + delta;
                     } else {
                         // short일 경우 short 이득 + 변화량
-                        shortProfits = shortProfits.add(delta);
+                        shortProfits = shortProfits + delta;
                     }
                 }
 
                 // AUM에 담보 가치 더하기
-                aum = aum.add(_vault.guaranteedUsd(token));
+                aum += _vault.guaranteedUsd(token);
 
                 // AUM + ((토큰 pool - reserve) * 토큰 가격)
                 // 토큰 pool - reserve = 토큰 개수, 즉 토큰 개수 * 토큰 가격 계산으로 가치 계산
                 // 결과적으로 예약된 토큰을 제외한 풀에 있는 토큰의 총 가치를 AUM에 더하는 것
                 uint256 reservedAmount = _vault.reservedAmounts(token);
-                aum = aum.add(poolAmount.sub(reservedAmount).mul(price).div(10 ** decimals));
+                aum = aum + (poolAmount - (reservedAmount * price / 10 ** decimals));
             }
         }
 
         // AUM이 short 이득보다 크다면 AUM = (AUM - short 이득)
-        aum = shortProfits > aum ? 0 : aum.sub(shortProfits);
+        aum = shortProfits > aum ? 0 : aum - shortProfits;
         // AUM 감소
-        return aumDeduction > aum ? 0 : aum.sub(aumDeduction);
+        return aumDeduction > aum ? 0 : aum - aumDeduction;
     }
 
     function getGlobalShortDelta(address _token, uint256 _price, uint256 _size) public view returns (uint256, bool) {
         uint256 averagePrice = getGlobalShortAveragePrice(_token);
-        uint256 priceDelta = averagePrice > _price ? averagePrice.sub(_price) : _price.sub(averagePrice);
+        uint256 priceDelta = averagePrice > _price ? averagePrice - _price : _price - averagePrice;
         // 크기 * (이후 가격과 평균 가격 차이) / 평균 가격
-        uint256 delta = _size.mul(priceDelta).div(averagePrice);
+        uint256 delta = _size * priceDelta / averagePrice;
         // (변화량, short 여부)
         return (delta, averagePrice > _price);
     }
@@ -224,9 +222,9 @@ contract GlpManager is ReentrancyGuard, Governable, IGlpManager {
         uint256 vaultAveragePrice = vault.globalShortAveragePrices(_token);
         uint256 shortsTrackerAveragePrice = _shortsTracker.globalShortAveragePrices(_token);
         // vault 가격 * (10000 - 가중치) + shortsTracker 가격 * (가중치)
-        return vaultAveragePrice.mul(BASIS_POINTS_DIVISOR.sub(_shortsTrackerAveragePriceWeight))
-            .add(shortsTrackerAveragePrice.mul(_shortsTrackerAveragePriceWeight))
-            .div(BASIS_POINTS_DIVISOR);
+        return vaultAveragePrice * (BASIS_POINTS_DIVISOR - _shortsTrackerAveragePriceWeight)
+            + (shortsTrackerAveragePrice * _shortsTrackerAveragePriceWeight)
+            / BASIS_POINTS_DIVISOR;
     }   
     
     /**
@@ -256,7 +254,7 @@ contract GlpManager is ReentrancyGuard, Governable, IGlpManager {
 
         // AUM을 USDG로 변환했을 때 0개라면 토큰을 USDG로 swap한 개수 사용
         // 아니라면 (토큰을 USDG로 swap한 개수 * GLP 총 개수) / AUM을 USDG로 변환했을 때 개수
-        uint256 mintAmount = aumInUsdg == 0 ? usdgAmount : usdgAmount.mul(glpSupply).div(aumInUsdg);
+        uint256 mintAmount = aumInUsdg == 0 ? usdgAmount : usdgAmount * glpSupply / aumInUsdg;
         // 이 개수는 예상하는 최소 GLP양보다 커야한다
         require(mintAmount >= _minGlp, "GlpManager: insufficient GLP output");
 
@@ -273,7 +271,7 @@ contract GlpManager is ReentrancyGuard, Governable, IGlpManager {
 
     function _removeLiquidity(address _account, address _tokenOut, uint256 _glpAmount, uint256 _minOut, address _receiver) private returns (uint256) {
         require(_glpAmount > 0, "GlpManager: invalid _glpAmount");
-        require(lastAddedAt[_account].add(cooldownDuration) <= block.timestamp, "GlpManager: cooldown duration not yet passed");
+        require(lastAddedAt[_account] + cooldownDuration <= block.timestamp, "GlpManager: cooldown duration not yet passed");
 
         // AUM 계산
         uint256 aumInUsdg = getAumInUsdg(false);
@@ -281,13 +279,13 @@ contract GlpManager is ReentrancyGuard, Governable, IGlpManager {
         uint256 glpSupply = IERC20(glp).totalSupply();
 
         // USDG 개수 = (빼고 싶은 GLP * AUM을 USDG로 변환했을 때 개수) / GLP 총 개수
-        uint256 usdgAmount = _glpAmount.mul(aumInUsdg).div(glpSupply);
+        uint256 usdgAmount = _glpAmount * aumInUsdg / glpSupply;
         // 컨트랙트 총 USDG
         uint256 usdgBalance = IERC20(usdg).balanceOf(address(this));
         // 컨트랙트에 들어있는 총 USDG를 넘어갈 경우
         if (usdgAmount > usdgBalance) {
             // USDG를 부족분만큼 민팅
-            IUSDG(usdg).mint(address(this), usdgAmount.sub(usdgBalance));
+            IUSDG(usdg).mint(address(this), usdgAmount - usdgBalance);
         }
 
         // 제거한 유동성 GLP토큰 burn

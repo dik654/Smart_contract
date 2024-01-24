@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.6.0;
+pragma solidity ^0.8.0;
 
-import "../libraries/math/SafeMath.sol";
-import "../libraries/token/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../tokens/interfaces/IWETH.sol";
 import "../libraries/token/SafeERC20.sol";
 import "../libraries/utils/Address.sol";
@@ -14,7 +13,6 @@ import "./interfaces/IVault.sol";
 import "./interfaces/IOrderBook.sol";
 
 contract OrderBook is ReentrancyGuard, IOrderBook {
-    using SafeMath for uint256;
     using SafeERC20 for IERC20;
     using Address for address payable;
 
@@ -232,7 +230,7 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
         _;
     }
 
-    constructor() public {
+    constructor() {
         gov = msg.sender;
     }
 
@@ -333,7 +331,7 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
             // A는 WETH여야하고
             require(_path[0] == weth, "OrderBook: only weth could be wrapped");
             // 넣은 ETH의 양 == 실행수수료 + WETH 개수여야함
-            require(msg.value == _executionFee.add(_amountIn), "OrderBook: incorrect value transferred");
+            require(msg.value == _executionFee + _amountIn, "OrderBook: incorrect value transferred");
         } else {
             // 다른 토큰으로 시작할 경우 
             // ETH로는 실행 수수료만 넣고
@@ -368,7 +366,7 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
             _executionFee
         );
         // 주문 구조체 매핑
-        swapOrdersIndex[_account] = _orderIndex.add(1);
+        swapOrdersIndex[_account] = _orderIndex + 1;
         swapOrders[_account][_orderIndex] = order;
 
         emit CreateSwapOrder(
@@ -417,10 +415,10 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
         // 주문 토큰 반환
         // 실행 수수료 반환
         if (order.path[0] == weth) {
-            _transferOutETH(order.executionFee.add(order.amountIn), msg.sender);
+            _transferOutETH(order.executionFee + order.amountIn, payable(msg.sender));
         } else {
             IERC20(order.path[0]).safeTransfer(msg.sender, order.amountIn);
-            _transferOutETH(order.executionFee, msg.sender);
+            _transferOutETH(order.executionFee, payable(msg.sender));
         }
 
         emit CancelSwapOrder(
@@ -443,7 +441,7 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
         uint256 otherTokenPrice = IVault(vault).getMinPrice(_otherToken);
         uint256 otherTokenDecimals = IVault(vault).tokenDecimals(_otherToken);
         // 총 가치 = USDG를 변환했을 때 받을 수 있는 최소 토큰 개수 * 최소 토큰 가격
-        return redemptionAmount.mul(otherTokenPrice).div(10 ** otherTokenDecimals);
+        return redemptionAmount * otherTokenPrice / 10 ** otherTokenDecimals;
     }
 
     function validateSwapOrderPriceWithTriggerAboveThreshold(
@@ -488,7 +486,7 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
             tokenBPrice = IVault(vault).getMaxPrice(tokenB);
         }
 
-        uint256 currentRatio = tokenBPrice.mul(PRICE_PRECISION).div(tokenAPrice);
+        uint256 currentRatio = tokenBPrice * PRICE_PRECISION / tokenAPrice;
 
         // _triggerRatio는 사용자가 원하는 가격 비율
         bool isValid = currentRatio > _triggerRatio;
@@ -655,7 +653,7 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
             // 시작 토큰은 WETH여야하고
             require(_path[0] == weth, "OrderBook: only weth could be wrapped");
             // 넣은 ETH는 실행 수수료 + 추가할 양
-            require(msg.value == _executionFee.add(_amountIn), "OrderBook: incorrect value transferred");
+            require(msg.value == _executionFee + _amountIn, "OrderBook: incorrect value transferred");
         } else {
             // 일반 토큰을 사용할 경우 ETH로는 수수료만 보내고
             require(msg.value == _executionFee, "OrderBook: incorrect execution fee transferred");
@@ -727,7 +725,7 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
             _executionFee
         );
         // 주문 구조체 매핑
-        increaseOrdersIndex[_account] = _orderIndex.add(1);
+        increaseOrdersIndex[_account] = _orderIndex + 1;
         increaseOrders[_account][_orderIndex] = order;
 
         emit CreateIncreaseOrder(
@@ -778,11 +776,11 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
         // WETH를 사용했을 경우
         if (order.purchaseToken == weth) {
             // ETH로 반환
-            _transferOutETH(order.executionFee.add(order.purchaseTokenAmount), msg.sender);
+            _transferOutETH(order.executionFee + order.purchaseTokenAmount, payable(msg.sender));
         } else {
             // 토큰일 경우 토큰을 반환받고, 실행 수수료는 ETH로 받는다
             IERC20(order.purchaseToken).safeTransfer(msg.sender, order.purchaseTokenAmount);
-            _transferOutETH(order.executionFee, msg.sender);
+            _transferOutETH(order.executionFee, payable(msg.sender));
         }
 
         emit CancelIncreaseOrder(
@@ -895,7 +893,7 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
             _triggerAboveThreshold,
             msg.value
         );
-        decreaseOrdersIndex[_account] = _orderIndex.add(1);
+        decreaseOrdersIndex[_account] = _orderIndex + 1;
         decreaseOrders[_account][_orderIndex] = order;
 
         emit CreateDecreaseOrder(
@@ -968,7 +966,7 @@ contract OrderBook is ReentrancyGuard, IOrderBook {
         require(order.account != address(0), "OrderBook: non-existent order");
 
         delete decreaseOrders[msg.sender][_orderIndex];
-        _transferOutETH(order.executionFee, msg.sender);
+        _transferOutETH(order.executionFee, payable(msg.sender));
 
         emit CancelDecreaseOrder(
             order.account,

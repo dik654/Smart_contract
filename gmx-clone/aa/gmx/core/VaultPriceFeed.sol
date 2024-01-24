@@ -4,7 +4,8 @@ pragma solidity ^0.8.0;
 import "./interfaces/IVaultPriceFeed.sol";
 import "../oracle/interfaces/IPriceFeed.sol";
 import "../oracle/interfaces/ISecondaryPriceFeed.sol";
-import "../../pancake/interfaces/IPancakePair.sol";
+import "../amm/interfaces/IPancakePair.sol";
+
 
 contract VaultPriceFeed is IVaultPriceFeed {
 

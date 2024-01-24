@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.6.12;
+pragma solidity ^0.8.0;
 
-import "../libraries/math/SafeMath.sol";
-import "../libraries/token/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../libraries/token/SafeERC20.sol";
 import "../libraries/utils/Address.sol";
 
@@ -13,7 +12,6 @@ import "./interfaces/IRouter.sol";
 
 // Router 자체에서는 swap만을 실행해서 사용함
 contract Router is IRouter {
-    using SafeMath for uint256;
     using SafeERC20 for IERC20;
     using Address for address payable;
 
@@ -33,7 +31,7 @@ contract Router is IRouter {
         _;
     }
 
-    constructor(address _vault, address _usdg, address _weth) public {
+    constructor(address _vault, address _usdg, address _weth) {
         vault = _vault;
         usdg = _usdg;
         weth = _weth;
@@ -201,8 +199,8 @@ contract Router is IRouter {
 
     /**
      * @dev vault에서 WETH를 꺼내서 ETH로 바꿔서 receiver에게 전달
-     * @param _amountOut 
-     * @param _receiver 
+     * @param _amountOut .
+     * @param _receiver .
      */
     function _transferOutETH(uint256 _amountOut, address payable _receiver) private {
         IWETH(weth).withdraw(_amountOut);
