@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import './interfaces/IPancakePair.sol';
 import './PancakeERC20.sol';
-import './libraries/Math.sol';
 import './libraries/UQ112x112.sol';
 import './interfaces/IPancakeFactory.sol';
 import './interfaces/IPancakeCallee.sol';
@@ -79,8 +78,8 @@ contract PancakePair is IPancakePair, PancakeERC20 {
         uint _kLast = kLast; // gas savings
         if (feeOn) {
             if (_kLast != 0) {
-                uint rootK = Math.sqrt(uint256(_reserve0) * _reserve1);
-                uint rootKLast = Math.sqrt(_kLast);
+                uint rootK = _sqrt(uint256(_reserve0) * _reserve1);
+                uint rootKLast = _sqrt(_kLast);
                 if (rootK > rootKLast) {
                     uint numerator = totalSupply * (rootK - rootKLast) * 8;
                     uint denominator = rootK * 17 + (rootKLast * 8);
@@ -104,10 +103,10 @@ contract PancakePair is IPancakePair, PancakeERC20 {
         bool feeOn = _mintFee(_reserve0, _reserve1);
         uint _totalSupply = totalSupply; // gas savings, must be defined here since totalSupply can update in _mintFee
         if (_totalSupply == 0) {
-            liquidity = Math.sqrt(amount0 * amount1) - MINIMUM_LIQUIDITY;
+            liquidity = _sqrt(amount0 * amount1) - MINIMUM_LIQUIDITY;
            _mint(address(0), MINIMUM_LIQUIDITY); // permanently lock the first MINIMUM_LIQUIDITY tokens
         } else {
-            liquidity = Math.min(amount0 * _totalSupply / _reserve0, amount1 * _totalSupply / _reserve1);
+            liquidity = _min(amount0 * _totalSupply / _reserve0, amount1 * _totalSupply / _reserve1);
         }
         require(liquidity > 0, 'Pancake: INSUFFICIENT_LIQUIDITY_MINTED');
         _mint(to, liquidity);
@@ -184,5 +183,23 @@ contract PancakePair is IPancakePair, PancakeERC20 {
     // force reserves to match balances
     function sync() external override lock {
         _update(IERC20(token0).balanceOf(address(this)), IERC20(token1).balanceOf(address(this)), reserve0, reserve1);
+    }
+
+    function _min(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        z = x < y ? x : y;
+    }
+
+    // babylonian method (https://en.wikipedia.org/wiki/Methods_of_computing_square_roots#Babylonian_method)
+    function _sqrt(uint256 y) internal pure returns (uint256 z) {
+        if (y > 3) {
+            z = y;
+            uint256 x = y / 2 + 1;
+            while (x < z) {
+                z = x;
+                x = (y / x + x) / 2;
+            }
+        } else if (y != 0) {
+            z = 1;
+        }
     }
 }

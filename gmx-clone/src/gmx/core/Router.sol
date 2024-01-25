@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: MIT
-
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../libraries/token/SafeERC20.sol";
 import "../libraries/utils/Address.sol";
 
 import "../tokens/interfaces/IWETH.sol";
-import "./interfaces/IVault.sol";
+import "./interfaces/IVaultBase.sol";
 import "./interfaces/IRouter.sol";
 
 // Router 자체에서는 swap만을 실행해서 사용함

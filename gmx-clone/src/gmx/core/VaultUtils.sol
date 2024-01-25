@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
-
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "./interfaces/IVault.sol";
+import "./interfaces/IVaultBase.sol";
 import "./interfaces/IVaultUtils.sol";
 
 import "../access/Governable.sol";
@@ -19,13 +18,13 @@ contract VaultUtils is IVaultUtils, Governable {
         uint256 lastIncreasedTime;
     }
 
-    IVault public vault;
+    IVaultBase public vault;
 
     uint256 public constant BASIS_POINTS_DIVISOR = 10000;
     uint256 public constant FUNDING_RATE_PRECISION = 1000000;
 
-    constructor(IVault _vault) {
-        vault = _vault;
+    constructor(address _vault) {
+        vault = IVaultBase(_vault);
     }
 
     function updateCumulativeFundingRate(address /* _collateralToken */, address /* _indexToken */) public pure override returns (bool) {
@@ -41,7 +40,7 @@ contract VaultUtils is IVaultUtils, Governable {
     }
 
     function getPosition(address _account, address _collateralToken, address _indexToken, bool _isLong) internal view returns (Position memory) {
-        IVault _vault = vault;
+        IVaultBase _vault = vault;
         Position memory position;
         {
             (uint256 size, uint256 collateral, uint256 averagePrice, uint256 entryFundingRate, /* reserveAmount */, /* realisedPnl */, /* hasProfit */, uint256 lastIncreasedTime) = _vault.getPosition(_account, _collateralToken, _indexToken, _isLong);
@@ -67,7 +66,7 @@ contract VaultUtils is IVaultUtils, Governable {
     function validateLiquidation(address _account, address _collateralToken, address _indexToken, bool _isLong, bool _raise) public view override returns (uint256, uint256) {
         // 포지션 가져오기
         Position memory position = getPosition(_account, _collateralToken, _indexToken, _isLong);
-        IVault _vault = vault;
+        IVaultBase _vault = vault;
 
         // 이득 여부, 변화량 = 크기 * 변화량 / 저장된 가격
         (bool hasProfit, uint256 delta) = _vault.getDelta(_indexToken, position.size, position.averagePrice, _isLong, position.lastIncreasedTime);

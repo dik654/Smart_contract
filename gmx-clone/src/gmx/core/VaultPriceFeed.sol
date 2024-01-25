@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.17;
 
 import "./interfaces/IVaultPriceFeed.sol";
 import "../oracle/interfaces/IPriceFeed.sol";
@@ -7,7 +7,6 @@ import "../oracle/interfaces/ISecondaryPriceFeed.sol";
 import "../../pancake/interfaces/IPancakePair.sol";
 
 contract VaultPriceFeed is IVaultPriceFeed {
-
     uint256 public constant PRICE_PRECISION = 10 ** 30;
     uint256 public constant ONE_USD = PRICE_PRECISION;
     uint256 public constant BASIS_POINTS_DIVISOR = 10000;

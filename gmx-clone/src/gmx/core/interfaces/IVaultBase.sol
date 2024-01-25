@@ -1,10 +1,97 @@
 // SPDX-License-Identifier: MIT
-
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.17;
 
 import "./IVaultUtils.sol";
 
-interface IVault {
+interface IVaultBase {
+    struct Position {
+        uint256 size;
+        uint256 collateral;
+        uint256 averagePrice;
+        uint256 entryFundingRate;
+        uint256 reserveAmount;
+        int256 realisedPnl;
+        uint256 lastIncreasedTime;
+    }
+
+    event BuyUSDG(address account, address token, uint256 tokenAmount, uint256 usdgAmount, uint256 feeBasisPoints);
+    event SellUSDG(address account, address token, uint256 usdgAmount, uint256 tokenAmount, uint256 feeBasisPoints);
+    event Swap(address account, address tokenIn, address tokenOut, uint256 amountIn, uint256 amountOut, uint256 amountOutAfterFees, uint256 feeBasisPoints);
+
+    event IncreasePosition(
+        bytes32 key,
+        address account,
+        address collateralToken,
+        address indexToken,
+        uint256 collateralDelta,
+        uint256 sizeDelta,
+        bool isLong,
+        uint256 price,
+        uint256 fee
+    );
+    event DecreasePosition(
+        bytes32 key,
+        address account,
+        address collateralToken,
+        address indexToken,
+        uint256 collateralDelta,
+        uint256 sizeDelta,
+        bool isLong,
+        uint256 price,
+        uint256 fee
+    );
+    event LiquidatePosition(
+        bytes32 key,
+        address account,
+        address collateralToken,
+        address indexToken,
+        bool isLong,
+        uint256 size,
+        uint256 collateral,
+        uint256 reserveAmount,
+        int256 realisedPnl,
+        uint256 markPrice
+    );
+    event UpdatePosition(
+        bytes32 key,
+        uint256 size,
+        uint256 collateral,
+        uint256 averagePrice,
+        uint256 entryFundingRate,
+        uint256 reserveAmount,
+        int256 realisedPnl,
+        uint256 markPrice
+    );
+    event ClosePosition(
+        bytes32 key,
+        uint256 size,
+        uint256 collateral,
+        uint256 averagePrice,
+        uint256 entryFundingRate,
+        uint256 reserveAmount,
+        int256 realisedPnl
+    );
+
+    event UpdateFundingRate(address token, uint256 fundingRate);
+    event UpdatePnl(bytes32 key, bool hasProfit, uint256 delta);
+
+    event CollectSwapFees(address token, uint256 feeUsd, uint256 feeTokens);
+    event CollectMarginFees(address token, uint256 feeUsd, uint256 feeTokens);
+
+    event DirectPoolDeposit(address token, uint256 amount);
+    event IncreasePoolAmount(address token, uint256 amount);
+    event DecreasePoolAmount(address token, uint256 amount);
+    event IncreaseUsdgAmount(address token, uint256 amount);
+    event DecreaseUsdgAmount(address token, uint256 amount);
+    event IncreaseReservedAmount(address token, uint256 amount);
+    event DecreaseReservedAmount(address token, uint256 amount);
+    event IncreaseGuaranteedUsd(address token, uint256 amount);
+    event DecreaseGuaranteedUsd(address token, uint256 amount);
+
+    function PRICE_PRECISION() external view returns (uint256);
+    function BASIS_POINTS_DIVISOR() external view returns (uint256);
+    function vaultUtils() external view returns (IVaultUtils);
+
     function isInitialized() external view returns (bool);
     function isSwapEnabled() external view returns (bool);
     function isLeverageEnabled() external view returns (bool);
@@ -38,49 +125,14 @@ interface IVault {
     function tokenBalances(address _token) external view returns (uint256);
     function lastFundingTimes(address _token) external view returns (uint256);
 
-    function setMaxLeverage(uint256 _maxLeverage) external;
-    function setInManagerMode(bool _inManagerMode) external;
-    function setManager(address _manager, bool _isManager) external;
-    function setIsSwapEnabled(bool _isSwapEnabled) external;
-    function setIsLeverageEnabled(bool _isLeverageEnabled) external;
-    function setMaxGasPrice(uint256 _maxGasPrice) external;
-    function setUsdgAmount(address _token, uint256 _amount) external;
-    function setBufferAmount(address _token, uint256 _amount) external;
-    function setMaxGlobalShortSize(address _token, uint256 _amount) external;
-    function setInPrivateLiquidationMode(bool _inPrivateLiquidationMode) external;
-    function setLiquidator(address _liquidator, bool _isActive) external;
-
-    function setFundingRate(uint256 _fundingInterval, uint256 _fundingRateFactor, uint256 _stableFundingRateFactor) external;
-
-    function setFees(
-        uint256 _taxBasisPoints,
-        uint256 _stableTaxBasisPoints,
-        uint256 _mintBurnFeeBasisPoints,
-        uint256 _swapFeeBasisPoints,
-        uint256 _stableSwapFeeBasisPoints,
-        uint256 _marginFeeBasisPoints,
-        uint256 _liquidationFeeUsd,
-        uint256 _minProfitTime,
-        bool _hasDynamicFees
-    ) external;
-
-    function setTokenConfig(
-        address _token,
-        uint256 _tokenDecimals,
-        uint256 _redemptionBps,
-        uint256 _minProfitBps,
-        uint256 _maxUsdgAmount,
-        bool _isStable,
-        bool _isShortable
-    ) external;
-
-    function setPriceFeed(address _priceFeed) external;
     function withdrawFees(address _token, address _receiver) external returns (uint256);
 
     function directPoolDeposit(address _token) external;
     function buyUSDG(address _token, address _receiver) external returns (uint256);
     function sellUSDG(address _token, address _receiver) external returns (uint256);
     function swap(address _tokenIn, address _tokenOut, address _receiver) external returns (uint256);
+    function increaseGlobalShortSize(address _token, uint256 _amount) external;
+    function decreaseGlobalShortSize(address _token, uint256 _amount) external;
     function increasePosition(address _account, address _collateralToken, address _indexToken, uint256 _sizeDelta, bool _isLong) external;
     function decreasePosition(address _account, address _collateralToken, address _indexToken, uint256 _collateralDelta, uint256 _sizeDelta, bool _isLong, address _receiver) external returns (uint256);
     function validateLiquidation(address _account, address _collateralToken, address _indexToken, bool _isLong, bool _raise) external view returns (uint256, uint256);
@@ -125,4 +177,22 @@ interface IVault {
 
     function getDelta(address _indexToken, uint256 _size, uint256 _averagePrice, bool _isLong, uint256 _lastIncreasedTime) external view returns (bool, uint256);
     function getPosition(address _account, address _collateralToken, address _indexToken, bool _isLong) external view returns (uint256, uint256, uint256, uint256, uint256, uint256, bool, uint256);
+    function validate(bool _condition, uint256 _errorCode) external view;
+    function transferIn(address) external returns (uint256);
+    function increasePoolAmount(address _token, uint256 _amount) external;
+    function updateCumulativeFundingRate(address _collateralToken, address _indexToken) external;
+    function adjustForDecimals(uint256 _amount, address _tokenDiv, address _tokenMul) external view returns (uint256);
+    function increaseUsdgAmount(address _token, uint256 _amount) external;
+    function decreaseUsdgAmount(address _token, uint256 _amount) external;
+    function decreasePoolAmount(address _token, uint256 _amount) external;
+    function updateTokenBalance(address _token) external;
+    function getNextAveragePrice(address _indexToken, uint256 _size, uint256 _averagePrice, bool _isLong, uint256 _nextPrice, uint256 _sizeDelta, uint256 _lastIncreasedTime) external view returns (uint256);
+    function transferOut(address _token, uint256 _amount, address _receiver) external;
+    function validateBufferAmount(address _token) external view;
+    function increaseFeeReserves(address _token, uint256 _amount) external;
+    function setIncludeAmmPrice(bool _setting) external;
+    function setPosition(bytes32 _key, Position calldata _position) external returns (bool);
+    function deletePosition(bytes32 _keys) external returns (bool);
+    function validateRouter(address _account) external view;
+    function validateTokens(address _collateralToken, address _indexToken, bool _isLong) external view
 }
