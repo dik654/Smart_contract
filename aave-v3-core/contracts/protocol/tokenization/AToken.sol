@@ -19,6 +19,7 @@ import {EIP712Base} from './base/EIP712Base.sol';
  * @title Aave ERC20 AToken
  * @author Aave
  * @notice Implementation of the interest bearing token for the Aave protocol
+ * @dev 대출시 생성되는 가상 토큰
  */
 contract AToken is VersionedInitializable, ScaledBalanceTokenBase, EIP712Base, IAToken {
   using WadRayMath for uint256;
@@ -89,6 +90,7 @@ contract AToken is VersionedInitializable, ScaledBalanceTokenBase, EIP712Base, I
     uint256 amount,
     uint256 index
   ) external virtual override onlyPool returns (bool) {
+    // amount / index 만큼 onBehalfOf에게 AToken mint
     return _mintScaled(caller, onBehalfOf, amount, index);
   }
 
@@ -99,7 +101,10 @@ contract AToken is VersionedInitializable, ScaledBalanceTokenBase, EIP712Base, I
     uint256 amount,
     uint256 index
   ) external virtual override onlyPool {
+    // amount / index만큼 from에서 토큰을 태우고
+    // event로만 receiverOfUnderlying이 담보를 받아야한다고 표기
     _burnScaled(from, receiverOfUnderlying, amount, index);
+    // 이 컨트랙트가 담보를 받는 경우 진짜로 담보 보내기
     if (receiverOfUnderlying != address(this)) {
       IERC20(_underlyingAsset).safeTransfer(receiverOfUnderlying, amount);
     }

@@ -144,6 +144,7 @@ library ValidationLogic {
   ) internal view {
     require(params.amount != 0, Errors.INVALID_AMOUNT);
 
+    // borrow 파라미터 캐싱
     ValidateBorrowLocalVars memory vars;
 
     (
@@ -154,54 +155,71 @@ library ValidationLogic {
       vars.isPaused
     ) = params.reserveCache.reserveConfiguration.getFlags();
 
+    // reserve가
+    // Active 상태인지
     require(vars.isActive, Errors.RESERVE_INACTIVE);
+    // 정지된 상태가 아닌지
     require(!vars.isPaused, Errors.RESERVE_PAUSED);
+    // Frozen 상태가 아닌지
     require(!vars.isFrozen, Errors.RESERVE_FROZEN);
+    // borrowing이 허용 상태인지
     require(vars.borrowingEnabled, Errors.BORROWING_NOT_ENABLED);
 
     require(
+      // 가격 오라클이 설정되어있지않거나 || 설정된 가격 오라클에서 borrowing이 허용상태인지 체크
       params.priceOracleSentinel == address(0) ||
         IPriceOracleSentinel(params.priceOracleSentinel).isBorrowAllowed(),
       Errors.PRICE_ORACLE_SENTINEL_CHECK_FAILED
     );
 
-    //validate interest rate mode
+    // validate interest rate mode
     require(
       params.interestRateMode == DataTypes.InterestRateMode.VARIABLE ||
-        params.interestRateMode == DataTypes.InterestRateMode.STABLE,
+      params.interestRateMode == DataTypes.InterestRateMode.STABLE,
       Errors.INVALID_INTEREST_RATE_MODE_SELECTED
     );
 
+    // 단위 데이터 가져오기
     vars.reserveDecimals = params.reserveCache.reserveConfiguration.getDecimals();
+    // borrow 가능한 최대치 값 가져오기
     vars.borrowCap = params.reserveCache.reserveConfiguration.getBorrowCap();
     unchecked {
+      // 사용하는 asset의 단위는 reserve의 단위와 동일
       vars.assetUnit = 10 ** vars.reserveDecimals;
     }
 
     if (vars.borrowCap != 0) {
+      // 변동 빚의 총량 = 현재 변동 빚 * 변동 borrow 지수
       vars.totalSupplyVariableDebt = params.reserveCache.currScaledVariableDebt.rayMul(
         params.reserveCache.nextVariableBorrowIndex
       );
 
+      // 총 빚 = 현재 stable 빚 총량 + 변동 빚의 총량 + 빌릴 양
       vars.totalDebt =
         params.reserveCache.currTotalStableDebt +
         vars.totalSupplyVariableDebt +
         params.amount;
 
       unchecked {
+        // 총 빚 <= 최대 borrow 가능량 인지 체크 
         require(vars.totalDebt <= vars.borrowCap * vars.assetUnit, Errors.BORROW_CAP_EXCEEDED);
       }
     }
 
+    // isolation 모드가 켜져있는지 체크
+    // 특정 자산이 전체 시스템에 미치는 리스크를 제한하는 데 초점을 맞춘 모드
+    // 담보로 사용할 수 있는 자산과 대출할 수 있는 최대 금액이 제한
     if (params.isolationModeActive) {
       // check that the asset being borrowed is borrowable in isolation mode AND
       // the total exposure is no bigger than the collateral debt ceiling
       require(
+        // isolation 모드에서 borrow가 허용되어있는지 체크
         params.reserveCache.reserveConfiguration.getBorrowableInIsolation(),
         Errors.ASSET_NOT_BORROWABLE_IN_ISOLATION
       );
 
       require(
+        // isolationMode에서 총 빚 + (빌릴 양 / 보유 자산의 정밀도와 최대 빚의 정밀도 간의 차이를 조정)
         reservesData[params.isolationModeCollateralAddress].isolationModeTotalDebt +
           (params.amount /
             10 ** (vars.reserveDecimals - ReserveConfiguration.DEBT_CEILING_DECIMALS))
@@ -211,11 +229,15 @@ library ValidationLogic {
       );
     }
 
+    // eMode를 사용한다면
+    // 스테이블 코인에 대해 더 유리한 대출 및 담보 조건을 제공
     if (params.userEModeCategory != 0) {
       require(
+        // 유저의 eMode와 reserve의 eMode가 동일한지 체크
         params.reserveCache.reserveConfiguration.getEModeCategory() == params.userEModeCategory,
         Errors.INCONSISTENT_EMODE_CATEGORY
       );
+      // eMode의 가격 오라클 가져오기
       vars.eModePriceSource = eModeCategories[params.userEModeCategory].priceSource;
     }
 
@@ -243,10 +265,12 @@ library ValidationLogic {
     require(vars.currentLtv != 0, Errors.LTV_VALIDATION_FAILED);
 
     require(
+      // 건전성 비율이 역치를 넘어가는지 체크
       vars.healthFactor > HEALTH_FACTOR_LIQUIDATION_THRESHOLD,
       Errors.HEALTH_FACTOR_LOWER_THAN_LIQUIDATION_THRESHOLD
     );
 
+    // 넣은 유동성의 가치 계산
     vars.amountInBaseCurrency =
       IPriceOracleGetter(params.oracle).getAssetPrice(
         vars.eModePriceSource != address(0) ? vars.eModePriceSource : params.asset
@@ -261,6 +285,7 @@ library ValidationLogic {
       .percentDiv(vars.currentLtv); //LTV is calculated in percentage
 
     require(
+      // 넣은 유동성의 가치가 요구되는 담보보다 큰 지 체크
       vars.collateralNeededInBaseCurrency <= vars.userCollateralInBaseCurrency,
       Errors.COLLATERAL_CANNOT_COVER_NEW_BORROW
     );
@@ -273,9 +298,11 @@ library ValidationLogic {
      * 3. Users will be able to borrow only a portion of the total available liquidity
      */
 
+    // 이자율 모드가 stable 모드라면
+    // STABLE MODE = 대출 기간 동안 이자율이 일정하게 유지
+    // VARIABLE MODE = 시장 상황에 따라 이자율이 변동
     if (params.interestRateMode == DataTypes.InterestRateMode.STABLE) {
       //check if the borrow mode is stable and if stable rate borrowing is enabled on this reserve
-
       require(vars.stableRateBorrowingEnabled, Errors.STABLE_BORROWING_NOT_ENABLED);
 
       require(

@@ -72,10 +72,13 @@ library BorrowLogic {
     DataTypes.ExecuteBorrowParams memory params
   ) public {
     DataTypes.ReserveData storage reserve = reservesData[params.asset];
+    // reserve 캐싱
     DataTypes.ReserveCache memory reserveCache = reserve.cache();
 
+    // reserve 상태 업데이트
     reserve.updateState(reserveCache);
 
+    // isolation mode 설정 가져오기
     (
       bool isolationModeActive,
       address isolationModeCollateralAddress,

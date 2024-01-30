@@ -105,6 +105,7 @@ library UserConfiguration {
     uint256 reserveIndex
   ) internal pure returns (bool) {
     unchecked {
+      // SupplyLogic의 executeUseReserveAsCollateral로 등록된 상태인지
       require(reserveIndex < ReserveConfiguration.MAX_RESERVES_COUNT, Errors.INVALID_RESERVE_INDEX);
       return (self.data >> ((reserveIndex << 1) + 1)) & 1 != 0;
     }

@@ -100,6 +100,7 @@ contract VariableDebtToken is DebtTokenBase, ScaledBalanceTokenBase, IVariableDe
       _decreaseBorrowAllowance(onBehalfOf, user, amount);
     }
     // (민팅할 amount / 유동성 지수)만큼 토큰 mint
+    // (첫 민팅인지 여부, totalSupply) 리턴
     return (_mintScaled(user, onBehalfOf, amount, index), scaledTotalSupply());
   }
 
