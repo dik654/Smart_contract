@@ -9,7 +9,7 @@ import {SafeCast} from '../../../dependencies/openzeppelin/contracts/SafeCast.so
 /**
  * @title IsolationModeLogic library
  * @author Aave
- * @notice Implements the base logic for handling repayments for assets borrowed in isolation mode
+ * @notice 특정 토큰이 정해진 종류 토큰만을 borrow할 수 있도록 하는 모드
  */
 library IsolationModeLogic {
   using ReserveConfiguration for DataTypes.ReserveConfigurationMap;

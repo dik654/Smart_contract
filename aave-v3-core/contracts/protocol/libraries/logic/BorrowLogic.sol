@@ -173,6 +173,7 @@ library BorrowLogic {
    * @notice Implements the repay feature. Repaying transfers the underlying back to the aToken and clears the
    * equivalent amount of debt for the user by burning the corresponding debt token. For isolated positions, it also
    * reduces the isolated debt.
+   * borrow를 상환하는 메서드
    * @dev  Emits the `Repay()` event
    * @param reservesData The state of all the reserves
    * @param reservesList The addresses of all the active reserves

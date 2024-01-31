@@ -58,11 +58,14 @@ library BridgeLogic {
     address onBehalfOf,
     uint16 referralCode
   ) external {
+    // reserve 데이터 캐싱
     DataTypes.ReserveData storage reserve = reservesData[asset];
     DataTypes.ReserveCache memory reserveCache = reserve.cache();
 
+    // reserve 상태 업데이트
     reserve.updateState(reserveCache);
 
+    // amount를 추가했을 때 최대 공급량 제한을 넘어서는지 체크
     ValidationLogic.validateSupply(reserveCache, reserve, amount);
 
     uint256 unbackedMintCap = reserveCache.reserveConfiguration.getUnbackedMintCap();
@@ -74,9 +77,10 @@ library BridgeLogic {
       unbacked <= unbackedMintCap * (10 ** reserveDecimals),
       Errors.UNBACKED_MINT_CAP_EXCEEDED
     );
-
+    // 이자율 업데이트
     reserve.updateInterestRates(reserveCache, asset, 0, 0);
 
+    // AToken minting
     bool isFirstSupply = IAToken(reserveCache.aTokenAddress).mint(
       msg.sender,
       onBehalfOf,
@@ -94,6 +98,7 @@ library BridgeLogic {
           reserveCache.aTokenAddress
         )
       ) {
+        // 특정 토큰을 담보로 사용 가능하도록 설정
         userConfig.setUsingAsCollateral(reserve.id, true);
         emit ReserveUsedAsCollateralEnabled(asset, onBehalfOf);
       }

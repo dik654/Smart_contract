@@ -70,6 +70,7 @@ library ValidationLogic {
   ) internal view {
     require(amount != 0, Errors.INVALID_AMOUNT);
 
+    // reserve 상태 확인
     (bool isActive, bool isFrozen, , , bool isPaused) = reserveCache
       .reserveConfiguration
       .getFlags();
@@ -77,8 +78,10 @@ library ValidationLogic {
     require(!isPaused, Errors.RESERVE_PAUSED);
     require(!isFrozen, Errors.RESERVE_FROZEN);
 
+    // 최대 공급량 제한값 가져오기
     uint256 supplyCap = reserveCache.reserveConfiguration.getSupplyCap();
     require(
+      // AToken TotalSupply + (현재 treasury 잔고 * 유동성 지수 + 공급할 유동성) <= 최대 공급량 제한
       supplyCap == 0 ||
         ((IAToken(reserveCache.aTokenAddress).scaledTotalSupply() +
           uint256(reserve.accruedToTreasury)).rayMul(reserveCache.nextLiquidityIndex) + amount) <=
@@ -99,8 +102,10 @@ library ValidationLogic {
     uint256 userBalance
   ) internal pure {
     require(amount != 0, Errors.INVALID_AMOUNT);
+    // 보유한 잔고보다 많이 출금할 수 없다
     require(amount <= userBalance, Errors.NOT_ENOUGH_AVAILABLE_USER_BALANCE);
 
+    // reserve의 상태 확인(동결할 경우 출금은 가능)
     (bool isActive, , , , bool isPaused) = reserveCache.reserveConfiguration.getFlags();
     require(isActive, Errors.RESERVE_INACTIVE);
     require(!isPaused, Errors.RESERVE_PAUSED);
@@ -306,18 +311,25 @@ library ValidationLogic {
       require(vars.stableRateBorrowingEnabled, Errors.STABLE_BORROWING_NOT_ENABLED);
 
       require(
+        // 사용자가 대출받으려는 자산을 담보로 사용하고 있지 않다면
+        // 해당 자산의 LTV 비율이 0이라면(해당 자산을 담보로 사용할 수 없다면)
+        // 대출하려는 금액이 사용자의 담보(aToken 잔액)보다 많다면(???)
+        // 통과
         !params.userConfig.isUsingAsCollateral(reservesData[params.asset].id) ||
           params.reserveCache.reserveConfiguration.getLtv() == 0 ||
           params.amount > IERC20(params.reserveCache.aTokenAddress).balanceOf(params.userAddress),
         Errors.COLLATERAL_SAME_AS_BORROWING_CURRENCY
       );
 
+      // 총 사용가능한 유동성(해당 토큰에 대한 AToken 개수) 업데이트
       vars.availableLiquidity = IERC20(params.asset).balanceOf(params.reserveCache.aTokenAddress);
 
-      //calculate the max available loan size in stable rate mode as a percentage of the
-      //available liquidity
+      // calculate the max available loan size in stable rate mode as a percentage of the
+      // available liquidity
+      // 안정적으로 대출 가능한 최대 크기 = 총 사용가능한 유동성 * 총 안정대출비율%
       uint256 maxLoanSizeStable = vars.availableLiquidity.percentMul(params.maxStableLoanPercent);
 
+      // 빌리는 양은 안정적으로 대출 가능한 최대 크기보다 작아야한다
       require(params.amount <= maxLoanSizeStable, Errors.AMOUNT_BIGGER_THAN_MAX_LOAN_SIZE_STABLE);
     }
 
@@ -596,10 +608,14 @@ library ValidationLogic {
       );
 
     require(
+      // Health Factor = (총 담보 가치 × 해당 자산의 LTV) / 총 부채
+      // 청산 비율 이하로 내려가지않았는지 검사
       healthFactor >= HEALTH_FACTOR_LIQUIDATION_THRESHOLD,
       Errors.HEALTH_FACTOR_LOWER_THAN_LIQUIDATION_THRESHOLD
     );
 
+    // hasZeroLtvCollateral는 담보로 제공한 자산 중에서 LTV 비율이 0인 자산이 있는지 여부
+    // 사용자가 추가 대출을 받을 수 있는지 평가하는 데 사용
     return (healthFactor, hasZeroLtvCollateral);
   }
 
@@ -627,7 +643,7 @@ library ValidationLogic {
     uint8 userEModeCategory
   ) internal view {
     DataTypes.ReserveData memory reserve = reservesData[asset];
-
+    // LTV 비율이 0%인 담보가 있는지 체크
     (, bool hasZeroLtvCollateral) = validateHealthFactor(
       reservesData,
       reservesList,
@@ -640,6 +656,7 @@ library ValidationLogic {
     );
 
     require(
+      // LTV 비율이 0%인 담보가 없거나 || 해당 reserve의 asset이 담보로 사용되지 않고있다면 통과
       !hasZeroLtvCollateral || reserve.configuration.getLtv() == 0,
       Errors.LTV_VALIDATION_FAILED
     );
@@ -738,14 +755,18 @@ library ValidationLogic {
     DataTypes.UserConfigurationMap storage userConfig,
     DataTypes.ReserveConfigurationMap memory reserveConfig
   ) internal view returns (bool) {
+    // LTV가 0이라면 해당 asset을 담보로 사용하는 것이 아니므로 false
     if (reserveConfig.getLtv() == 0) {
       return false;
     }
+    // 유저가 현재 담보가 하나도 없다면 true 
     if (!userConfig.isUsingAsCollateralAny()) {
       return true;
     }
+    // 하나의 asset만 사용하는 유저의 해당 asset이 isolation mode가 켜져있는지 확인
     (bool isolationModeActive, , ) = userConfig.getIsolationModeState(reservesData, reservesList);
 
+    // isolation mode가 꺼져있고 && 해당 asset에 최대 빚 제한이 설정되어있지 않다면 true(아니라면 이미 activated된 상태)
     return (!isolationModeActive && reserveConfig.getDebtCeiling() == 0);
   }
 
@@ -766,18 +787,22 @@ library ValidationLogic {
     DataTypes.ReserveConfigurationMap memory reserveConfig,
     address aTokenAddress
   ) internal view returns (bool) {
+    // 최대 빚 제한이 있다면
     if (reserveConfig.getDebtCeiling() != 0) {
       // ensures only the ISOLATED_COLLATERAL_SUPPLIER_ROLE can enable collateral as side-effect of an action
+      // addressProvider 주소를 읽어온 뒤
       IPoolAddressesProvider addressesProvider = IncentivizedERC20(aTokenAddress)
         .POOL()
         .ADDRESSES_PROVIDER();
       if (
+        // 권한관리 컨트랙트를 통해 msg.sender가 ISOLATE 담보를 제공할 수 있는 권한을 가지고 없다면 false
         !IAccessControl(addressesProvider.getACLManager()).hasRole(
           ISOLATED_COLLATERAL_SUPPLIER_ROLE,
           msg.sender
         )
       ) return false;
     }
+    // 담보로 사용할 수 있는지 체크
     return validateUseAsCollateral(reservesData, reservesList, userConfig, reserveConfig);
   }
 }

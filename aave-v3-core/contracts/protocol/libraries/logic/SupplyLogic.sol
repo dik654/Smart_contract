@@ -63,12 +63,13 @@ library SupplyLogic {
     // 최신 블록 타임스탬프를 기반으로 이자율 등 업데이트
     reserve.updateState(reserveCache);
 
+    // 공급을 추가한다면 최대 공급량 제한을 넘어서는지 체크
     ValidationLogic.validateSupply(reserveCache, reserve, params.amount);
-
+    // 이번 자산을 예금하면서 변경된 수수료율 업데이트
     reserve.updateInterestRates(reserveCache, params.asset, params.amount, 0);
-
+    // 자산 토큰을 AToken 주소로 전송
     IERC20(params.asset).safeTransferFrom(msg.sender, reserveCache.aTokenAddress, params.amount);
-
+    // (amount / 유동성 지수)만큼 AToken 생성
     bool isFirstSupply = IAToken(reserveCache.aTokenAddress).mint(
       msg.sender,
       params.onBehalfOf,
@@ -76,8 +77,10 @@ library SupplyLogic {
       reserveCache.nextLiquidityIndex
     );
 
+    // AToken이 생성됐다면
     if (isFirstSupply) {
       if (
+        // 해당 reserve의 asset이 담보로 사용할 수 있는지 체크
         ValidationLogic.validateAutomaticUseAsCollateral(
           reservesData,
           reservesList,
@@ -86,6 +89,7 @@ library SupplyLogic {
           reserveCache.aTokenAddress
         )
       ) {
+        // user 정보에 해당 asset을 담보로 사용하는 것으로 기록
         userConfig.setUsingAsCollateral(reserve.id, true);
         emit ReserveUsedAsCollateralEnabled(params.asset, params.onBehalfOf);
       }
@@ -116,29 +120,36 @@ library SupplyLogic {
     DataTypes.ReserveData storage reserve = reservesData[params.asset];
     DataTypes.ReserveCache memory reserveCache = reserve.cache();
 
+    // reserve 상태 업데이트
     reserve.updateState(reserveCache);
 
+    // 유저 잔고 = 해당 reserve에 대한 유저 AToken 잔고 * 해당 reserve 유동성 지수
     uint256 userBalance = IAToken(reserveCache.aTokenAddress).scaledBalanceOf(msg.sender).rayMul(
       reserveCache.nextLiquidityIndex
     );
 
     uint256 amountToWithdraw = params.amount;
 
+    // 인출하려는 양이 uint256 최대치라면 유저 balance로 자동 설정
     if (params.amount == type(uint256).max) {
       amountToWithdraw = userBalance;
     }
 
+    // 보유한 잔고 내에서 출금하는지, reserve가 활성화 상태인지 체크 
     ValidationLogic.validateWithdraw(reserveCache, amountToWithdraw, userBalance);
-
+    // 출금 이후 이자율 업데이트
     reserve.updateInterestRates(reserveCache, params.asset, 0, amountToWithdraw);
-
+    // 유저가 해당 reserve의 토큰을 담보로 사용하는지 체크 
     bool isCollateral = userConfig.isUsingAsCollateral(reserve.id);
 
+    // 담보로 사용하고있고 && 전부 출금하는 경우라면 
     if (isCollateral && amountToWithdraw == userBalance) {
+      // 전부 꺼낸 이후에는 담보가 없으므로 유저가 해당 토큰을 담보로 사용하지 않는 것으로 변경
       userConfig.setUsingAsCollateral(reserve.id, false);
       emit ReserveUsedAsCollateralDisabled(params.asset, msg.sender);
     }
 
+    // 담보를 출금했으니 AToken 소각
     IAToken(reserveCache.aTokenAddress).burn(
       msg.sender,
       params.to,
@@ -146,7 +157,9 @@ library SupplyLogic {
       reserveCache.nextLiquidityIndex
     );
 
+    // 담보로 사용되고있고 && 대출한 무언가가 있다면
     if (isCollateral && userConfig.isBorrowingAny()) {
+      // 청산가능 여부와 LTV에 문제가 없는지 확인
       ValidationLogic.validateHFAndLtv(
         reservesData,
         reservesList,

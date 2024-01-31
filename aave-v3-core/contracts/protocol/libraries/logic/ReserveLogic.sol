@@ -179,6 +179,7 @@ library ReserveLogic {
   ) internal {
     UpdateInterestRatesLocalVars memory vars;
 
+    // 업데이트될 총 변동 빚 = 다음 변동 빚 * 다음 변동 Borrow 지수 
     vars.totalVariableDebt = reserveCache.nextScaledVariableDebt.rayMul(
       reserveCache.nextVariableBorrowIndex
     );
@@ -187,7 +188,9 @@ library ReserveLogic {
       vars.nextLiquidityRate,
       vars.nextStableRate,
       vars.nextVariableRate
-    ) = IReserveInterestRateStrategy(reserve.interestRateStrategyAddress).calculateInterestRates(
+    ) = 
+    // 수수료율 계산
+    IReserveInterestRateStrategy(reserve.interestRateStrategyAddress).calculateInterestRates(
       DataTypes.CalculateInterestRatesParams({
         unbacked: reserve.unbacked,
         liquidityAdded: liquidityAdded,
@@ -201,6 +204,7 @@ library ReserveLogic {
       })
     );
 
+    // 수수료율 업데이트
     reserve.currentLiquidityRate = vars.nextLiquidityRate.toUint128();
     reserve.currentStableBorrowRate = vars.nextStableRate.toUint128();
     reserve.currentVariableBorrowRate = vars.nextVariableRate.toUint128();
@@ -217,7 +221,7 @@ library ReserveLogic {
 
   struct AccrueToTreasuryLocalVars {
     uint256 prevTotalStableDebt;
-    // // 시장 동향에 따라 변할 수 있는 부채
+    // 시장 동향에 따라 변할 수 있는 부채
     uint256 prevTotalVariableDebt;
     uint256 currTotalVariableDebt;
     // 변하지 않는 고정 부채

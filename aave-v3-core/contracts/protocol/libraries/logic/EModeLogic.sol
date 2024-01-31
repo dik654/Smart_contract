@@ -15,7 +15,7 @@ import {ReserveLogic} from './ReserveLogic.sol';
 /**
  * @title EModeLogic library
  * @author Aave
- * @notice Implements the base logic for all the actions related to the eMode
+ * @notice 특정 유형의 자산(stable 코인만, ETH 토큰들만, BTC 토큰들만 등등)만을 담보로 사용할 수 있게 하는 대신 높은 담보 가치를 주는 모드
  */
 library EModeLogic {
   using ReserveLogic for DataTypes.ReserveCache;

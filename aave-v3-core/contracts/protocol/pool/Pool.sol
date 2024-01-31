@@ -345,6 +345,7 @@ contract Pool is VersionedInitializable, PoolStorage, IPool {
 
   /// @inheritdoc IPool
   function swapBorrowRateMode(address asset, uint256 interestRateMode) public virtual override {
+    // 이자율 모드 변경
     BorrowLogic.executeSwapBorrowRateMode(
       _reserves[asset],
       _usersConfig[msg.sender],
@@ -384,6 +385,7 @@ contract Pool is VersionedInitializable, PoolStorage, IPool {
     uint256 debtToCover,
     bool receiveAToken
   ) public virtual override {
+    // 청산 실행
     LiquidationLogic.executeLiquidationCall(
       _reserves,
       _reservesList,
@@ -531,7 +533,7 @@ contract Pool is VersionedInitializable, PoolStorage, IPool {
   function getReserveNormalizedVariableDebt(
     address asset
   ) external view virtual override returns (uint256) {
-    // // 해당 자산의 이항급수를 이용한 이자율 계산
+    // 해당 자산의 이항급수를 이용한 이자율 계산
     return _reserves[asset].getNormalizedDebt();
   }
 

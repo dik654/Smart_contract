@@ -160,54 +160,78 @@ contract DefaultReserveInterestRateStrategy is IDefaultInterestRateStrategy {
   ) public view override returns (uint256, uint256, uint256) {
     CalcInterestRatesLocalVars memory vars;
 
+    // 총 빚 = 고정 빚 + 변동 빚
     vars.totalDebt = params.totalStableDebt + params.totalVariableDebt;
 
     vars.currentLiquidityRate = 0;
+    // 현재 변동 borrow율 
     vars.currentVariableBorrowRate = _baseVariableBorrowRate;
+    // 현재 고정 borrow율
     vars.currentStableBorrowRate = getBaseStableBorrowRate();
 
+    // 빚이 전혀 없는게 아니라면
     if (vars.totalDebt != 0) {
+      // (고정 / 전체) 빚 비율 = 총 고정빚 / 총 빚
       vars.stableToTotalDebtRatio = params.totalStableDebt.rayDiv(vars.totalDebt);
       vars.availableLiquidity =
+        // reserve에 들어있는 AToken + 추가된 유동성 - 사용된 유동성 
         IERC20(params.reserve).balanceOf(params.aToken) +
         params.liquidityAdded -
         params.liquidityTaken;
 
+      // 사용가능한 유동성 + 총 빚
       vars.availableLiquidityPlusDebt = vars.availableLiquidity + vars.totalDebt;
+      // 이용률(80%까지 stable) = 전체 빚 / (사용가능 유동성 + 총 빚)
       vars.borrowUsageRatio = vars.totalDebt.rayDiv(vars.availableLiquidityPlusDebt);
+      // 총 빚 / (사용가능한 유동성 + 총 빚 + 담보없이 생성된 토큰)
       vars.supplyUsageRatio = vars.totalDebt.rayDiv(
         vars.availableLiquidityPlusDebt + params.unbacked
       );
     }
 
+    // 최적 사용 비율(OPTIMAL_USAGE_RATIO)을 초과하는 경우, 이자율 증가
+    // 높은 이용률에 대한 위험을 반영
+    // 80% 이상이 되면 이자가 증가하는 형태
     if (vars.borrowUsageRatio > OPTIMAL_USAGE_RATIO) {
+      // 이용률이 80%에서 어느정도 넘었는지 / 20%(과다 이용 범위) 
       uint256 excessBorrowUsageRatio = (vars.borrowUsageRatio - OPTIMAL_USAGE_RATIO).rayDiv(
         MAX_EXCESS_USAGE_RATIO
       );
 
+      // 현재 고정 borrow율에 (안정 이용률 수수료 기울기 + 과다 이용률 수수료 기울기 * 과다 이용 비율) 더하기
       vars.currentStableBorrowRate +=
         _stableRateSlope1 +
         _stableRateSlope2.rayMul(excessBorrowUsageRatio);
 
+      // 현재 변동 borrow율에 (안정 이용률 수수료 기울기 + 과다 이용률 수수료 기울기 * 과다 이용 비율) 더하기
       vars.currentVariableBorrowRate +=
         _variableRateSlope1 +
         _variableRateSlope2.rayMul(excessBorrowUsageRatio);
     } else {
+      // 안정 이용률일 경우
+      // 현재 고정 borrow율에 (안정 이용률 수수료 기울기 * 현재 이용률 / 80%(안정 이용 범위)) 더하기
+      // 현재 이용률 / 80%(안정 이용 범위)로 비율 계산
       vars.currentStableBorrowRate += _stableRateSlope1.rayMul(vars.borrowUsageRatio).rayDiv(
         OPTIMAL_USAGE_RATIO
       );
 
+      // 현재 변동 borrow율에 (안정 이용률 수수료 기울기 * 현재 이용률 / 80%(안정 이용 범위)) 더하기
       vars.currentVariableBorrowRate += _variableRateSlope1.rayMul(vars.borrowUsageRatio).rayDiv(
         OPTIMAL_USAGE_RATIO
       );
     }
 
+    // (고정 / 전체) 빚 비율이 최적 (고정 / 전체) 빚 비율 보다 크다면
+    // 전체 구간에서 고정 이자율이 더 높게 설정된다
     if (vars.stableToTotalDebtRatio > OPTIMAL_STABLE_TO_TOTAL_DEBT_RATIO) {
+      // 초과한 고정 빚 비율 += 초과한 차이를 이용한 비율
       uint256 excessStableDebtRatio = (vars.stableToTotalDebtRatio -
         OPTIMAL_STABLE_TO_TOTAL_DEBT_RATIO).rayDiv(MAX_EXCESS_STABLE_TO_TOTAL_DEBT_RATIO);
+      // 현재 고정 borrow율에 (offset * 비율) 더하기
       vars.currentStableBorrowRate += _stableRateExcessOffset.rayMul(excessStableDebtRatio);
     }
 
+    // 예치된 자산에 대한 이자율
     vars.currentLiquidityRate = _getOverallBorrowRate(
       params.totalStableDebt,
       params.totalVariableDebt,
@@ -243,10 +267,13 @@ contract DefaultReserveInterestRateStrategy is IDefaultInterestRateStrategy {
 
     if (totalDebt == 0) return 0;
 
+    // 가중치된 변동 수수료율 = 총 변동 빚 * 현재 변동 borrow 수수료율
     uint256 weightedVariableRate = totalVariableDebt.wadToRay().rayMul(currentVariableBorrowRate);
 
+    // 가중치된 안정 수수료율 = 총 고정 빚 * 현재 평균 고정 borrow 수수료율
     uint256 weightedStableRate = totalStableDebt.wadToRay().rayMul(currentAverageStableBorrowRate);
 
+    // 전반적인 borrow 수수료율 = 둘의 합 / 전체 빚
     uint256 overallBorrowRate = (weightedVariableRate + weightedStableRate).rayDiv(
       totalDebt.wadToRay()
     );
