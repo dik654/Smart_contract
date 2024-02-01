@@ -40,3 +40,15 @@
 [submodule "gmx-clone/lib/openzeppelin-contracts"]
 	path = gmx-clone/lib/openzeppelin-contracts
 	url = https://github.com/OpenZeppelin/openzeppelin-contracts
+[submodule "MY-FI/swapV2/lib/forge-std"]
+	path = MY-FI/swapV2/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+[submodule "MY-FI/swapV3/lib/forge-std"]
+	path = MY-FI/swapV3/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+[submodule "MY-FI/lending/lib/forge-std"]
+	path = MY-FI/lending/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+[submodule "MY-FI/perpetual/lib/forge-std"]
+	path = MY-FI/perpetual/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
